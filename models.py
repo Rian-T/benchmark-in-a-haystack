@@ -1,0 +1,136 @@
+import os
+import requests
+from abc import ABC, abstractmethod
+from utils import score_documents
+
+# Add rich logging
+from rich.console import Console
+from rich.progress import Progress, SpinnerColumn, BarColumn, TextColumn, TimeElapsedColumn
+
+console = Console()
+
+class DocumentClassifier(ABC):
+    @abstractmethod
+    def score_documents(self, documents):
+        pass
+
+class DCLMClassifier(DocumentClassifier):
+    def __init__(self):
+        console.log("[bold cyan]Initializing DCLMClassifier...[/bold cyan]")
+        self.model = self._load_model()
+
+    @staticmethod
+    def _load_model():
+        model_path = "models/openhermes_reddit_eli5_vs_rw_v2_bigram_200k_train.bin"
+        if not os.path.exists(model_path):
+            console.log(f"[yellow]Model not found at {model_path}. Downloading...[/yellow]")
+            os.makedirs("models", exist_ok=True)
+            url = "https://huggingface.co/mlfoundations/fasttext-oh-eli5/raw/main/openhermes_reddit_eli5_vs_rw_v2_bigram_200k_train.bin"
+            with Progress(
+                SpinnerColumn(),
+                TextColumn("[progress.description]{task.description}"),
+                BarColumn(),
+                TimeElapsedColumn(),
+                console=console,
+            ) as progress:
+                task = progress.add_task("[green]Downloading FastText model...", total=None)
+                response = requests.get(url, stream=True)
+                with open(model_path, "wb") as f:
+                    for chunk in response.iter_content(chunk_size=8192):
+                        f.write(chunk)
+                progress.update(task, completed=1)
+            console.log(f"[green]Model downloaded to {model_path}.[/green]")
+        from utils import load_fasttext_model  # import here to avoid circular import
+        return load_fasttext_model(model_path)
+
+    def score_documents(self, documents):
+        console.log("[bold cyan]Scoring documents with DCLMClassifier...[/bold cyan]")
+        return score_documents(documents, self.model)
+
+class TextbookFastTextClassifier(DocumentClassifier):
+    def __init__(self):
+        console.log("[bold cyan]Initializing TextbookFastTextClassifier...[/bold cyan]")
+        self.model = self._load_model()
+
+    @staticmethod
+    def _load_model():
+        import fasttext
+        from huggingface_hub import hf_hub_download
+        console.log("[yellow]Loading Textbook FastText model from HuggingFace Hub...[/yellow]")
+        return fasttext.load_model(
+            hf_hub_download("kenhktsui/llm-data-textbook-quality-fasttext-classifer-v1", "model.bin")
+        )
+
+    def score_documents(self, documents):
+        import re
+        from typing import List
+
+        def replace_newlines(text: str) -> str:
+            return re.sub("\n+", " ", text)
+
+        console.log("[bold cyan]Scoring documents with TextbookFastTextClassifier...[/bold cyan]")
+        texts = [replace_newlines(doc["text"]) for doc in documents]
+        preds = self.model.predict(texts)
+        # preds: tuple (labels, scores), each is a list of lists
+        results = []
+        for doc, labels, scores in zip(documents, preds[0], preds[1]):
+            label = labels[0].lstrip("__label__")
+            score = scores[0]
+            results.append({
+                "id": doc["id"],
+                "source": doc["source"],
+                "contains_benchmark": doc["contains_benchmark"],
+                "benchmark_type": doc["benchmark_type"],
+                "benchmark_index": doc.get("benchmark_index", None),
+                "score": float(score),
+                "label": label
+            })
+        return results
+
+class FinewebEduClassifier(DocumentClassifier):
+    def __init__(self):
+        console.log("[bold cyan]Initializing FinewebEduClassifier...[/bold cyan]")
+        self.tokenizer, self.model, self.device = self._load_model()
+
+    @staticmethod
+    def _load_model():
+        from transformers import AutoTokenizer, AutoModelForSequenceClassification
+        import torch
+
+        console.log("[yellow]Loading FinewebEduClassifier model and tokenizer from HuggingFace Hub...[/yellow]")
+        tokenizer = AutoTokenizer.from_pretrained("HuggingFaceTB/fineweb-edu-classifier")
+        # Try CUDA, then MPS, then CPU
+        if torch.cuda.is_available():
+            device = torch.device("cuda")
+            console.log("[green]Using CUDA for inference.[/green]")
+        elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+            device = torch.device("mps")
+            console.log("[green]Using MPS for inference.[/green]")
+        else:
+            device = torch.device("cpu")
+            console.log("[yellow]Using CPU for inference.[/yellow]")
+        model = AutoModelForSequenceClassification.from_pretrained("HuggingFaceTB/fineweb-edu-classifier").to(device)
+        return tokenizer, model, device
+
+    def score_documents(self, documents):
+        import torch
+        console.log("[bold cyan]Scoring documents with FinewebEduClassifier...[/bold cyan]")
+        results = []
+        for doc in documents:
+            text = doc["text"]
+            inputs = self.tokenizer(text, return_tensors="pt", padding="longest", truncation=True).to(self.device)
+            with torch.no_grad():
+                outputs = self.model(**inputs)
+            logits = outputs.logits.squeeze(-1).float().detach().cpu().numpy()
+            score = logits.item()
+            int_score = int(round(max(0, min(score, 5))))
+            results.append({
+                "id": doc["id"],
+                "source": doc["source"],
+                "contains_benchmark": doc["contains_benchmark"],
+                "benchmark_type": doc["benchmark_type"],
+                "benchmark_index": doc.get("benchmark_index", None),
+                "score": float(score),
+                "int_score": int_score
+            })
+        return results

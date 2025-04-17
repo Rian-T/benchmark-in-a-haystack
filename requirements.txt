@@ -1,0 +1,12 @@
+numpy
+pandas
+torch
+transformers
+datasets
+tqdm
+fasttext
+huggingface_hub
+matplotlib
+seaborn
+rich
+requests
