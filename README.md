@@ -10,8 +10,16 @@ Options:
 - `--separate` : Place benchmarks in separate docs (not injected)
 - `--prefilter-hq` : Use only high-quality fineweb docs
 - `--min-hq-score 0.7` : Set min high-quality score
+- `--fineweb-path <path_or_repo>` : Specify fineweb dataset path or HF repo (default: HuggingFaceFW/fineweb)
+- `--download-models` : Download all required models to `models/` and exit
 
 Results (plots, CSV, JSON) are saved in `results/`.
+
+## Download All Models for Offline Use
+
+```bash
+python haystack.py --download-models
+```
 
 ## Add More Benchmarks
 

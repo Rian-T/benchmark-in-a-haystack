@@ -55,11 +55,17 @@ class TextbookFastTextClassifier(DocumentClassifier):
     @staticmethod
     def _load_model():
         import fasttext
-        from huggingface_hub import hf_hub_download
-        console.log("[yellow]Loading Textbook FastText model from HuggingFace Hub...[/yellow]")
-        return fasttext.load_model(
-            hf_hub_download("kenhktsui/llm-data-textbook-quality-fasttext-classifer-v1", "model.bin")
-        )
+        import os
+        model_path = "models/textbook_model.bin"
+        if os.path.exists(model_path):
+            console.log(f"[yellow]Loading Textbook FastText model from local {model_path}...[/yellow]")
+            return fasttext.load_model(model_path)
+        else:
+            from huggingface_hub import hf_hub_download
+            console.log("[yellow]Loading Textbook FastText model from HuggingFace Hub...[/yellow]")
+            return fasttext.load_model(
+                hf_hub_download("kenhktsui/llm-data-textbook-quality-fasttext-classifer-v1", "model.bin")
+            )
 
     def score_documents(self, documents):
         import re
@@ -96,9 +102,17 @@ class FinewebEduClassifier(DocumentClassifier):
     def _load_model():
         from transformers import AutoTokenizer, AutoModelForSequenceClassification
         import torch
+        import os
 
-        console.log("[yellow]Loading FinewebEduClassifier model and tokenizer from HuggingFace Hub...[/yellow]")
-        tokenizer = AutoTokenizer.from_pretrained("HuggingFaceTB/fineweb-edu-classifier")
+        model_dir = "models/fineweb-edu-classifier"
+        if os.path.exists(model_dir) and os.path.isdir(model_dir):
+            console.log(f"[yellow]Loading FinewebEduClassifier model and tokenizer from local {model_dir}...[/yellow]")
+            tokenizer = AutoTokenizer.from_pretrained(model_dir)
+            model = AutoModelForSequenceClassification.from_pretrained(model_dir)
+        else:
+            console.log("[yellow]Loading FinewebEduClassifier model and tokenizer from HuggingFace Hub...[/yellow]")
+            tokenizer = AutoTokenizer.from_pretrained("HuggingFaceTB/fineweb-edu-classifier")
+            model = AutoModelForSequenceClassification.from_pretrained("HuggingFaceTB/fineweb-edu-classifier")
         # Try CUDA, then MPS, then CPU
         if torch.cuda.is_available():
             device = torch.device("cuda")
@@ -109,7 +123,7 @@ class FinewebEduClassifier(DocumentClassifier):
         else:
             device = torch.device("cpu")
             console.log("[yellow]Using CPU for inference.[/yellow]")
-        model = AutoModelForSequenceClassification.from_pretrained("HuggingFaceTB/fineweb-edu-classifier").to(device)
+        model = model.to(device)
         return tokenizer, model, device
 
     def score_documents(self, documents):

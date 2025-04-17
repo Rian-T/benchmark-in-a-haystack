@@ -23,7 +23,55 @@ console = Console()
 
 CLASSIFIERS = [DCLMClassifier, TextbookFastTextClassifier, FinewebEduClassifier]
 
-def main(inject_inside=True, num_docs=100000, prefilter_hq=False, min_hq_score=0.5):
+def download_all_models():
+    """
+    Download all required models to the local 'models' folder.
+    """
+    from huggingface_hub import hf_hub_download
+    import shutil
+
+    console.rule("[bold blue]Downloading all required models...[/bold blue]")
+
+    # DCLM FastText model
+    dclm_path = "models/openhermes_reddit_eli5_vs_rw_v2_bigram_200k_train.bin"
+    if not os.path.exists(dclm_path):
+        url = "https://huggingface.co/mlfoundations/fasttext-oh-eli5/raw/main/openhermes_reddit_eli5_vs_rw_v2_bigram_200k_train.bin"
+        os.makedirs("models", exist_ok=True)
+        console.log(f"[yellow]Downloading DCLM FastText model to {dclm_path}...[/yellow]")
+        with requests.get(url, stream=True) as r:
+            with open(dclm_path, "wb") as f:
+                shutil.copyfileobj(r.raw, f)
+        console.log(f"[green]Downloaded DCLM FastText model.[/green]")
+    else:
+        console.log(f"[green]DCLM FastText model already exists at {dclm_path}.[/green]")
+
+    # Textbook FastText model
+    tb_path = "models/textbook_model.bin"
+    if not os.path.exists(tb_path):
+        console.log(f"[yellow]Downloading Textbook FastText model to {tb_path}...[/yellow]")
+        bin_path = hf_hub_download("kenhktsui/llm-data-textbook-quality-fasttext-classifer-v1", "model.bin")
+        os.makedirs("models", exist_ok=True)
+        shutil.copy(bin_path, tb_path)
+        console.log(f"[green]Downloaded Textbook FastText model.[/green]")
+    else:
+        console.log(f"[green]Textbook FastText model already exists at {tb_path}.[/green]")
+
+    # FinewebEduClassifier model and tokenizer
+    from transformers import AutoTokenizer, AutoModelForSequenceClassification
+    model_dir = "models/fineweb-edu-classifier"
+    if not os.path.exists(model_dir):
+        os.makedirs(model_dir, exist_ok=True)
+    try:
+        console.log(f"[yellow]Downloading FinewebEduClassifier model and tokenizer to {model_dir}...[/yellow]")
+        AutoTokenizer.from_pretrained("HuggingFaceTB/fineweb-edu-classifier", cache_dir=model_dir)
+        AutoModelForSequenceClassification.from_pretrained("HuggingFaceTB/fineweb-edu-classifier", cache_dir=model_dir)
+        console.log(f"[green]Downloaded FinewebEduClassifier model and tokenizer.[/green]")
+    except Exception as e:
+        console.log(f"[red]Error downloading FinewebEduClassifier: {e}[/red]")
+
+    console.rule("[bold green]All models downloaded.[/bold green]")
+
+def main(inject_inside=True, num_docs=100000, prefilter_hq=False, min_hq_score=0.5, fineweb_path="HuggingFaceFW/fineweb"):
     console.rule("[bold blue]Haystack Experiment Start[/bold blue]")
     console.log(f"[bold green]Running experiment with {'injected' if inject_inside else 'separate'} benchmarks on "
                 f"{'pre-filtered high-quality' if prefilter_hq else 'unfiltered'} documents[/bold green]")
@@ -45,7 +93,12 @@ def main(inject_inside=True, num_docs=100000, prefilter_hq=False, min_hq_score=0
             raise ValueError("Number of documents too small for the number of benchmarks.")
 
     # 3. Load documents
-    documents = load_fineweb_documents(num_fineweb_docs, prefilter_hq=prefilter_hq, min_hq_score=min_hq_score)
+    documents = load_fineweb_documents(
+        num_fineweb_docs,
+        prefilter_hq=prefilter_hq,
+        min_hq_score=min_hq_score,
+        fineweb_path=fineweb_path
+    )
 
     # 4. Inject benchmarks
     benchmark_positions = inject_benchmarks_into_documents(
@@ -76,11 +129,18 @@ if __name__ == "__main__":
     parser.add_argument("--num-docs", type=int, default=100000, help="Number of documents to load")
     parser.add_argument("--prefilter-hq", action="store_true", help="Pre-filter documents for high quality")
     parser.add_argument("--min-hq-score", type=float, default=0.7, help="Minimum high-quality score threshold")
+    parser.add_argument("--download-models", action="store_true", help="Download all required models and exit")
+    parser.add_argument("--fineweb-path", type=str, default="HuggingFaceFW/fineweb", help="Path or HF repo for fineweb dataset")
     args = parser.parse_args()
+
+    if args.download_models:
+        download_all_models()
+        exit(0)
 
     main(
         inject_inside=not args.separate,
         num_docs=args.num_docs,
         prefilter_hq=args.prefilter_hq,
-        min_hq_score=args.min_hq_score
+        min_hq_score=args.min_hq_score,
+        fineweb_path=args.fineweb_path
     )
