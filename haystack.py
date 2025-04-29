@@ -11,8 +11,9 @@ from utils import (
 )
 from analysis import analyze_and_plot
 from abc import ABC, abstractmethod
-from models import DCLMClassifier, TextbookFastTextClassifier, FinewebEduClassifier
+from models import DCLMClassifier, TextbookFastTextClassifier, FinewebEduClassifier, GaperonClassifier
 from rich.console import Console
+from huggingface_hub import hf_hub_download
 
 # Set a random seed for reproducibility
 random.seed(42)
@@ -21,7 +22,7 @@ torch.manual_seed(42)
 
 console = Console()
 
-CLASSIFIERS = [DCLMClassifier, TextbookFastTextClassifier, FinewebEduClassifier]
+CLASSIFIERS = [GaperonClassifier, FinewebEduClassifier, DCLMClassifier, TextbookFastTextClassifier]
 
 def download_all_models():
     """
@@ -35,12 +36,9 @@ def download_all_models():
     # DCLM FastText model
     dclm_path = "models/openhermes_reddit_eli5_vs_rw_v2_bigram_200k_train.bin"
     if not os.path.exists(dclm_path):
-        url = "https://huggingface.co/mlfoundations/fasttext-oh-eli5/raw/main/openhermes_reddit_eli5_vs_rw_v2_bigram_200k_train.bin"
+        bin_path = hf_hub_download("mlfoundations/fasttext-oh-eli5", "openhermes_reddit_eli5_vs_rw_v2_bigram_200k_train.bin")
         os.makedirs("models", exist_ok=True)
-        console.log(f"[yellow]Downloading DCLM FastText model to {dclm_path}...[/yellow]")
-        with requests.get(url, stream=True) as r:
-            with open(dclm_path, "wb") as f:
-                shutil.copyfileobj(r.raw, f)
+        shutil.copy(bin_path, dclm_path)
         console.log(f"[green]Downloaded DCLM FastText model.[/green]")
     else:
         console.log(f"[green]DCLM FastText model already exists at {dclm_path}.[/green]")
@@ -61,13 +59,31 @@ def download_all_models():
     model_dir = "models/fineweb-edu-classifier"
     if not os.path.exists(model_dir):
         os.makedirs(model_dir, exist_ok=True)
+
+    
     try:
         console.log(f"[yellow]Downloading FinewebEduClassifier model and tokenizer to {model_dir}...[/yellow]")
-        AutoTokenizer.from_pretrained("HuggingFaceTB/fineweb-edu-classifier", cache_dir=model_dir)
-        AutoModelForSequenceClassification.from_pretrained("HuggingFaceTB/fineweb-edu-classifier", cache_dir=model_dir)
+        AutoTokenizer.from_pretrained("HuggingFaceTB/fineweb-edu-classifier").save_pretrained(model_dir)
+        AutoModelForSequenceClassification.from_pretrained("HuggingFaceTB/fineweb-edu-classifier").save_pretrained(model_dir)
         console.log(f"[green]Downloaded FinewebEduClassifier model and tokenizer.[/green]")
     except Exception as e:
         console.log(f"[red]Error downloading FinewebEduClassifier: {e}[/red]")
+    
+    # Gaperon classifier
+    model_dir = "models/gaperon-classifier"
+    if not os.path.exists(model_dir):
+        os.makedirs(model_dir, exist_ok=True)
+
+    
+    try:
+        console.log(f"[yellow]Downloading GaperonClassifier model and tokenizer to {model_dir}...[/yellow]")
+        AutoTokenizer.from_pretrained("almanach/gaperon-quality-cls").save_pretrained(model_dir)
+        AutoModelForSequenceClassification.from_pretrained(
+            "almanach/gaperon-quality-cls", trust_remote_code=True
+        ).save_pretrained(model_dir)
+        console.log(f"[green]Downloaded GaperonClassifier model and tokenizer.[/green]")
+    except Exception as e:
+        console.log(f"[red]Error downloading GaperonClassifier: {e}[/red]")
 
     console.rule("[bold green]All models downloaded.[/bold green]")
 
@@ -78,9 +94,9 @@ def main(inject_inside=True, num_docs=100000, prefilter_hq=False, min_hq_score=0
 
     # 1. Load benchmark samples first to know how many there are
     console.log("[yellow]Loading benchmark samples...[/yellow]")
-    mmlu_samples = load_benchmark_samples("mmlu", subjects=["anatomy", "computer_security", "college_physics"])
-    gsm8k_samples = load_benchmark_samples("gsm8k", count=5)
-    gpqa_samples = load_benchmark_samples("gpqa", count=5)
+    mmlu_samples = load_benchmark_samples("mmlu", count=3, subjects=["anatomy", "computer_security", "high_school_geography", "moral_scenarios", "college_physics"])
+    gsm8k_samples = load_benchmark_samples("gsm8k", count=10)
+    gpqa_samples = load_benchmark_samples("gpqa", count=10)
     all_benchmarks = mmlu_samples + gsm8k_samples + gpqa_samples
     num_benchmarks = len(all_benchmarks)
 

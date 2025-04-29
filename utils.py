@@ -129,10 +129,11 @@ def inject_benchmarks_into_documents(documents, mmlu_samples, gsm8k_samples=None
     benchmark_positions = []
     
     # Define benchmark ranges to avoid overlap between different types
+    num_docs = len(documents)
     ranges = {
-        "mmlu": (0, 40000),
-        "gsm8k": (50000, 90000),
-        "gpqa": (40000, 50000)
+        "mmlu": (0, int(0.4*num_docs)),
+        "gsm8k": (int(0.5*num_docs), int(0.9*num_docs)),
+        "gpqa": (int(0.4*num_docs), int(0.5*num_docs))
     }
     
     # Process all benchmark samples
