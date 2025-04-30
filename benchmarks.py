@@ -22,11 +22,12 @@ class MMLUBenchmark(Benchmark):
             raise ValueError("MMLU requires subjects")
         for subject in subjects:
             dataset = load_dataset(self.dataset, subject, split=self.split)
-            samples.append({
-                "subject": subject,
-                "data": dataset[0],
-                "benchmark_type": "mmlu"
-            })
+            for idx in range(count):
+                samples.append({
+                    "subject": subject,
+                    "data": dataset[idx],
+                    "benchmark_type": "mmlu"
+                })
         return samples
 
     def format_sample(self, sample, subject=None):

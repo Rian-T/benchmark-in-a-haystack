@@ -6,6 +6,8 @@ from utils import score_documents
 # Add rich logging
 from rich.console import Console
 from rich.progress import Progress, SpinnerColumn, BarColumn, TextColumn, TimeElapsedColumn
+from tqdm import tqdm
+
 
 console = Console()
 
@@ -79,7 +81,7 @@ class TextbookFastTextClassifier(DocumentClassifier):
         preds = self.model.predict(texts)
         # preds: tuple (labels, scores), each is a list of lists
         results = []
-        for doc, labels, scores in zip(documents, preds[0], preds[1]):
+        for doc, labels, scores in tqdm(zip(documents, preds[0], preds[1])):
             label = labels[0].lstrip("__label__")
             score = scores[0]
             results.append({
@@ -94,9 +96,11 @@ class TextbookFastTextClassifier(DocumentClassifier):
         return results
 
 class FinewebEduClassifier(DocumentClassifier):
+    
     def __init__(self):
         console.log("[bold cyan]Initializing FinewebEduClassifier...[/bold cyan]")
         self.tokenizer, self.model, self.device = self._load_model()
+        self.batch_size = 100
 
     @staticmethod
     def _load_model():
@@ -130,21 +134,89 @@ class FinewebEduClassifier(DocumentClassifier):
         import torch
         console.log("[bold cyan]Scoring documents with FinewebEduClassifier...[/bold cyan]")
         results = []
-        for doc in documents:
-            text = doc["text"]
-            inputs = self.tokenizer(text, return_tensors="pt", padding="longest", truncation=True).to(self.device)
+        for idx_batch in tqdm(range(0, len(documents), self.batch_size)):
+            doc_batch = [documents[idx_batch+inbatch_idx] for inbatch_idx in range(self.batch_size)]
+            text_batch = [doc["text"] for doc in doc_batch]
+            inputs = self.tokenizer(text_batch, return_tensors="pt", padding="longest", truncation=True).to(self.device)
             with torch.no_grad():
                 outputs = self.model(**inputs)
-            logits = outputs.logits.squeeze(-1).float().detach().cpu().numpy()
-            score = logits.item()
-            int_score = int(round(max(0, min(score, 5))))
-            results.append({
-                "id": doc["id"],
-                "source": doc["source"],
-                "contains_benchmark": doc["contains_benchmark"],
-                "benchmark_type": doc["benchmark_type"],
-                "benchmark_index": doc.get("benchmark_index", None),
-                "score": float(score),
-                "int_score": int_score
-            })
+            for i_doc, doc in enumerate(doc_batch):
+                logits = outputs.logits[i_doc].float().detach().cpu().numpy()
+                score = logits.item()
+                int_score = int(round(max(0, min(score, 5))))
+                results.append({
+                    "id": doc["id"],
+                    "source": doc["source"],
+                    "contains_benchmark": doc["contains_benchmark"],
+                    "benchmark_type": doc["benchmark_type"],
+                    "benchmark_index": doc.get("benchmark_index", None),
+                    "score": float(score),
+                    "int_score": int_score
+                })
+        return results
+
+
+class GaperonClassifier(DocumentClassifier):
+
+    def __init__(self):
+        console.log("[bold cyan]Initializing GaperonClassifier...[/bold cyan]")
+        self.tokenizer, self.model, self.device = self._load_model()
+        self.batch_size = 100
+
+    @staticmethod
+    def _load_model():
+        from transformers import AutoTokenizer, AutoModelForSequenceClassification
+        import torch
+        import os
+
+        model_dir = "models/gaperon-quality-cls"
+        if os.path.exists(model_dir) and os.path.isdir(model_dir):
+            console.log(f"[yellow]Loading GaperonClassifier model and tokenizer from local {model_dir}...[/yellow]")
+            tokenizer = AutoTokenizer.from_pretrained(model_dir)
+            model = AutoModelForSequenceClassification.from_pretrained(model_dir, trust_remote_code=True)
+        else:
+            console.log("[yellow]Loading GaperonClassifier model and tokenizer from HuggingFace Hub...[/yellow]")
+            tokenizer = AutoTokenizer.from_pretrained("almanach/gaperon-quality-cls")
+            model = AutoModelForSequenceClassification.from_pretrained(
+                "almanach/gaperon-quality-cls", trust_remote_code=True
+            )
+        # Try CUDA, then MPS, then CPU
+        if torch.cuda.is_available():
+            device = torch.device("cuda")
+            console.log("[green]Using CUDA for inference.[/green]")
+        elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+            device = torch.device("mps")
+            console.log("[green]Using MPS for inference.[/green]")
+        else:
+            device = torch.device("cpu")
+            console.log("[yellow]Using CPU for inference.[/yellow]")
+        model = model.to(device)
+        return tokenizer, model, device
+
+    def score_documents(self, documents):
+        import torch
+        console.log("[bold cyan]Scoring documents with GaperonClassifier...[/bold cyan]")
+        results = []
+        for idx_batch in tqdm(range(0, len(documents), self.batch_size)):
+            doc_batch = [documents[idx_batch+inbatch_idx] for inbatch_idx in range(self.batch_size)]
+            text_batch = [doc["text"] for doc in doc_batch]
+            inputs = self.tokenizer(text_batch, return_tensors="pt", padding="longest", truncation=True, max_length=512).to(self.device)
+            inputs = {k: v[:, :512] for k, v in inputs.items()}
+            with torch.no_grad():
+                outputs = self.model(**inputs)
+
+            for i_doc, doc in enumerate(doc_batch):
+                logits = outputs.logits_list[0][i_doc].squeeze(0).float().softmax(-1).detach().cpu().numpy()
+                score = (logits[0] + 0.5 * logits[2]).item()
+            # print(score)
+                int_score = int(round(max(0, min(1+2*score, 3))))
+                results.append({
+                    "id": doc["id"],
+                    "source": doc["source"],
+                    "contains_benchmark": doc["contains_benchmark"],
+                    "benchmark_type": doc["benchmark_type"],
+                    "benchmark_index": doc.get("benchmark_index", None),
+                    "score": float(score),
+                    "int_score": int_score
+                })
         return results
