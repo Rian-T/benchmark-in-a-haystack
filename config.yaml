@@ -1,0 +1,42 @@
+# Haystack Experiment Configuration
+
+experiment:
+  seed: 42
+  inject_inside: true  # true = inject benchmarks into docs, false = separate docs
+
+dataset:
+  num_docs: 100000
+  fineweb_path: "HuggingFaceFW/fineweb"
+  prefilter_hq: false
+  min_hq_score: 0.7
+
+benchmarks:
+  mmlu:
+    count: 3
+    subjects:
+      - anatomy
+      - computer_security
+      - high_school_geography
+      - moral_scenarios
+      - college_physics
+  gsm8k:
+    count: 10
+  gpqa:
+    count: 10
+
+classifiers:
+  - name: DCLMClassifier
+    enabled: true
+  - name: TextbookFastTextClassifier
+    enabled: true
+  - name: FinewebEduClassifier
+    enabled: true
+  - name: GaperonClassifier
+    enabled: true
+  - name: FinePDFsEduClassifier
+    enabled: true
+  - name: FinePDFsDCLMClassifier
+    enabled: true
+  - name: NemoCuratorEduClassifier
+    enabled: false
+
