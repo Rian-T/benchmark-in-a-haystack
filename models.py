@@ -2,8 +2,6 @@ import os
 import requests
 from abc import ABC, abstractmethod
 from utils import score_documents
-
-# Add rich logging
 from rich.console import Console
 from rich.progress import Progress, SpinnerColumn, BarColumn, TextColumn, TimeElapsedColumn
 from tqdm import tqdm
@@ -15,6 +13,115 @@ class DocumentClassifier(ABC):
     @abstractmethod
     def score_documents(self, documents):
         pass
+
+
+class TransformersClassifier(DocumentClassifier, ABC):
+    def __init__(
+        self,
+        *,
+        local_model_dir=None,
+        hf_model_id=None,
+        batch_size=100,
+        trust_remote_code=False,
+        tokenizer_load_kwargs=None,
+        model_load_kwargs=None,
+        tokenizer_call_kwargs=None,
+        padding="longest",
+        truncation=True,
+        max_length=None,
+    ):
+        console.log(f"[bold cyan]Initializing {self.__class__.__name__}...[/bold cyan]")
+        self.local_model_dir = local_model_dir
+        self.hf_model_id = hf_model_id
+        self.batch_size = batch_size
+        self.trust_remote_code = trust_remote_code
+        self.tokenizer_load_kwargs = tokenizer_load_kwargs or {}
+        self.model_load_kwargs = model_load_kwargs or {}
+        self.tokenizer_call_kwargs = tokenizer_call_kwargs or {}
+        self.padding = padding
+        self.truncation = truncation
+        self.max_length = max_length
+        self.tokenizer, self.model, self.device = self._load_model()
+
+    def _load_model(self):
+        from transformers import AutoTokenizer, AutoModelForSequenceClassification
+        import torch
+
+        model_dir = self.local_model_dir
+        tokenizer_kwargs = dict(self.tokenizer_load_kwargs)
+        model_kwargs = dict(self.model_load_kwargs)
+        if "trust_remote_code" not in tokenizer_kwargs:
+            tokenizer_kwargs["trust_remote_code"] = self.trust_remote_code
+        if "trust_remote_code" not in model_kwargs:
+            model_kwargs["trust_remote_code"] = self.trust_remote_code
+
+        if model_dir and os.path.exists(model_dir) and os.path.isdir(model_dir):
+            console.log(f"[yellow]Loading {self.__class__.__name__} model and tokenizer from local {model_dir}...[/yellow]")
+            tokenizer = AutoTokenizer.from_pretrained(model_dir, **tokenizer_kwargs)
+            model = AutoModelForSequenceClassification.from_pretrained(model_dir, **model_kwargs)
+        elif self.hf_model_id:
+            console.log(f"[yellow]Loading {self.__class__.__name__} model and tokenizer from HuggingFace Hub...[/yellow]")
+            tokenizer = AutoTokenizer.from_pretrained(self.hf_model_id, **tokenizer_kwargs)
+            model = AutoModelForSequenceClassification.from_pretrained(self.hf_model_id, **model_kwargs)
+        else:
+            raise ValueError("Either local_model_dir or hf_model_id must be provided for TransformersClassifier.")
+
+        if torch.cuda.is_available():
+            device = torch.device("cuda")
+            console.log("[green]Using CUDA for inference.[/green]")
+        elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+            device = torch.device("mps")
+            console.log("[green]Using MPS for inference.[/green]")
+        else:
+            device = torch.device("cpu")
+            console.log("[yellow]Using CPU for inference.[/yellow]")
+
+        model = model.to(device)
+        model.eval()
+        return tokenizer, model, device
+
+    def _prepare_inputs(self, text_batch):
+        tokenizer_kwargs = dict(self.tokenizer_call_kwargs)
+        tokenizer_kwargs.setdefault("return_tensors", "pt")
+        tokenizer_kwargs.setdefault("padding", self.padding)
+        if self.max_length is not None:
+            tokenizer_kwargs.setdefault("max_length", self.max_length)
+            tokenizer_kwargs.setdefault("truncation", True)
+        elif self.truncation is not None:
+            tokenizer_kwargs.setdefault("truncation", self.truncation)
+
+        inputs = self.tokenizer(text_batch, **tokenizer_kwargs)
+        return inputs.to(self.device)
+
+    def _doc_metadata(self, doc):
+        return {
+            "id": doc["id"],
+            "source": doc["source"],
+            "contains_benchmark": doc["contains_benchmark"],
+            "benchmark_type": doc["benchmark_type"],
+            "benchmark_index": doc.get("benchmark_index", None),
+        }
+
+    @abstractmethod
+    def _postprocess(self, doc_batch, outputs, inputs):
+        """Transform raw model outputs into result dictionaries."""
+
+    def score_documents(self, documents):
+        import torch
+
+        console.log(f"[bold cyan]Scoring documents with {self.__class__.__name__}...[/bold cyan]")
+        results = []
+        for idx_batch in tqdm(range(0, len(documents), self.batch_size)):
+            batch_end = min(idx_batch + self.batch_size, len(documents))
+            doc_batch = documents[idx_batch:batch_end]
+            if not doc_batch:
+                continue
+            text_batch = [doc["text"] for doc in doc_batch]
+            inputs = self._prepare_inputs(text_batch)
+            with torch.no_grad():
+                outputs = self.model(**inputs)
+            results.extend(self._postprocess(doc_batch, outputs, inputs))
+        return results
 
 class DCLMClassifier(DocumentClassifier):
     def __init__(self):
@@ -42,7 +149,7 @@ class DCLMClassifier(DocumentClassifier):
                         f.write(chunk)
                 progress.update(task, completed=1)
             console.log(f"[green]Model downloaded to {model_path}.[/green]")
-        from utils import load_fasttext_model  # import here to avoid circular import
+        from utils import load_fasttext_model
         return load_fasttext_model(model_path)
 
     def score_documents(self, documents):
@@ -79,7 +186,6 @@ class TextbookFastTextClassifier(DocumentClassifier):
         console.log("[bold cyan]Scoring documents with TextbookFastTextClassifier...[/bold cyan]")
         texts = [replace_newlines(doc["text"]) for doc in documents]
         preds = self.model.predict(texts)
-        # preds: tuple (labels, scores), each is a list of lists
         results = []
         for doc, labels, scores in tqdm(zip(documents, preds[0], preds[1])):
             label = labels[0].lstrip("__label__")
@@ -95,128 +201,91 @@ class TextbookFastTextClassifier(DocumentClassifier):
             })
         return results
 
-class FinewebEduClassifier(DocumentClassifier):
-    
+class FinewebEduClassifier(TransformersClassifier):
     def __init__(self):
-        console.log("[bold cyan]Initializing FinewebEduClassifier...[/bold cyan]")
-        self.tokenizer, self.model, self.device = self._load_model()
-        self.batch_size = 100
+        super().__init__(
+            local_model_dir="models/fineweb-edu-classifier",
+            hf_model_id="HuggingFaceTB/fineweb-edu-classifier",
+            batch_size=100,
+        )
 
-    @staticmethod
-    def _load_model():
-        from transformers import AutoTokenizer, AutoModelForSequenceClassification
-        import torch
-        import os
-
-        model_dir = "models/fineweb-edu-classifier"
-        if os.path.exists(model_dir) and os.path.isdir(model_dir):
-            console.log(f"[yellow]Loading FinewebEduClassifier model and tokenizer from local {model_dir}...[/yellow]")
-            tokenizer = AutoTokenizer.from_pretrained(model_dir)
-            model = AutoModelForSequenceClassification.from_pretrained(model_dir)
-        else:
-            console.log("[yellow]Loading FinewebEduClassifier model and tokenizer from HuggingFace Hub...[/yellow]")
-            tokenizer = AutoTokenizer.from_pretrained("HuggingFaceTB/fineweb-edu-classifier")
-            model = AutoModelForSequenceClassification.from_pretrained("HuggingFaceTB/fineweb-edu-classifier")
-        # Try CUDA, then MPS, then CPU
-        if torch.cuda.is_available():
-            device = torch.device("cuda")
-            console.log("[green]Using CUDA for inference.[/green]")
-        elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
-            device = torch.device("mps")
-            console.log("[green]Using MPS for inference.[/green]")
-        else:
-            device = torch.device("cpu")
-            console.log("[yellow]Using CPU for inference.[/yellow]")
-        model = model.to(device)
-        return tokenizer, model, device
-
-    def score_documents(self, documents):
-        import torch
-        console.log("[bold cyan]Scoring documents with FinewebEduClassifier...[/bold cyan]")
+    def _postprocess(self, doc_batch, outputs, inputs):
+        scores = outputs.logits.detach().cpu().view(-1).tolist()
         results = []
-        for idx_batch in tqdm(range(0, len(documents), self.batch_size)):
-            doc_batch = [documents[idx_batch+inbatch_idx] for inbatch_idx in range(self.batch_size)]
-            text_batch = [doc["text"] for doc in doc_batch]
-            inputs = self.tokenizer(text_batch, return_tensors="pt", padding="longest", truncation=True).to(self.device)
-            with torch.no_grad():
-                outputs = self.model(**inputs)
-            for i_doc, doc in enumerate(doc_batch):
-                logits = outputs.logits[i_doc].float().detach().cpu().numpy()
-                score = logits.item()
-                int_score = int(round(max(0, min(score, 5))))
-                results.append({
-                    "id": doc["id"],
-                    "source": doc["source"],
-                    "contains_benchmark": doc["contains_benchmark"],
-                    "benchmark_type": doc["benchmark_type"],
-                    "benchmark_index": doc.get("benchmark_index", None),
-                    "score": float(score),
-                    "int_score": int_score
-                })
+        for doc, score in zip(doc_batch, scores):
+            bounded_score = float(score)
+            int_score = int(round(max(0, min(bounded_score, 5))))
+            result = self._doc_metadata(doc)
+            result.update({"score": bounded_score, "int_score": int_score})
+            results.append(result)
         return results
 
 
-class GaperonClassifier(DocumentClassifier):
-
+class GaperonClassifier(TransformersClassifier):
     def __init__(self):
-        console.log("[bold cyan]Initializing GaperonClassifier...[/bold cyan]")
-        self.tokenizer, self.model, self.device = self._load_model()
-        self.batch_size = 100
+        super().__init__(
+            local_model_dir="models/gaperon-quality-cls",
+            hf_model_id="almanach/gaperon-quality-cls",
+            batch_size=100,
+            trust_remote_code=True,
+            max_length=512,
+        )
 
-    @staticmethod
-    def _load_model():
-        from transformers import AutoTokenizer, AutoModelForSequenceClassification
-        import torch
-        import os
+    def _prepare_inputs(self, text_batch):
+        inputs = super()._prepare_inputs(text_batch)
+        return {k: v[:, :512] for k, v in inputs.items()}
 
-        model_dir = "models/gaperon-quality-cls"
-        if os.path.exists(model_dir) and os.path.isdir(model_dir):
-            console.log(f"[yellow]Loading GaperonClassifier model and tokenizer from local {model_dir}...[/yellow]")
-            tokenizer = AutoTokenizer.from_pretrained(model_dir)
-            model = AutoModelForSequenceClassification.from_pretrained(model_dir, trust_remote_code=True)
-        else:
-            console.log("[yellow]Loading GaperonClassifier model and tokenizer from HuggingFace Hub...[/yellow]")
-            tokenizer = AutoTokenizer.from_pretrained("almanach/gaperon-quality-cls")
-            model = AutoModelForSequenceClassification.from_pretrained(
-                "almanach/gaperon-quality-cls", trust_remote_code=True
-            )
-        # Try CUDA, then MPS, then CPU
-        if torch.cuda.is_available():
-            device = torch.device("cuda")
-            console.log("[green]Using CUDA for inference.[/green]")
-        elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
-            device = torch.device("mps")
-            console.log("[green]Using MPS for inference.[/green]")
-        else:
-            device = torch.device("cpu")
-            console.log("[yellow]Using CPU for inference.[/yellow]")
-        model = model.to(device)
-        return tokenizer, model, device
+    def _postprocess(self, doc_batch, outputs, inputs):
+        import torch.nn.functional as F
 
-    def score_documents(self, documents):
-        import torch
-        console.log("[bold cyan]Scoring documents with GaperonClassifier...[/bold cyan]")
+        logits_list = outputs.logits_list[0]
         results = []
-        for idx_batch in tqdm(range(0, len(documents), self.batch_size)):
-            doc_batch = [documents[idx_batch+inbatch_idx] for inbatch_idx in range(self.batch_size)]
-            text_batch = [doc["text"] for doc in doc_batch]
-            inputs = self.tokenizer(text_batch, return_tensors="pt", padding="longest", truncation=True, max_length=512).to(self.device)
-            inputs = {k: v[:, :512] for k, v in inputs.items()}
-            with torch.no_grad():
-                outputs = self.model(**inputs)
+        for doc, logits in zip(doc_batch, logits_list):
+            probs = F.softmax(logits.squeeze(0).detach().cpu().float(), dim=-1).numpy()
+            score = float(probs[0] + 0.5 * probs[2])
+            int_score = int(round(max(0, min(1 + 2 * score, 3))))
+            result = self._doc_metadata(doc)
+            result.update({"score": score, "int_score": int_score})
+            results.append(result)
+        return results
 
-            for i_doc, doc in enumerate(doc_batch):
-                logits = outputs.logits_list[0][i_doc].squeeze(0).float().softmax(-1).detach().cpu().numpy()
-                score = (logits[0] + 0.5 * logits[2]).item()
-            # print(score)
-                int_score = int(round(max(0, min(1+2*score, 3))))
-                results.append({
-                    "id": doc["id"],
-                    "source": doc["source"],
-                    "contains_benchmark": doc["contains_benchmark"],
-                    "benchmark_type": doc["benchmark_type"],
-                    "benchmark_index": doc.get("benchmark_index", None),
-                    "score": float(score),
-                    "int_score": int_score
-                })
+
+class FinePDFsEduClassifier(TransformersClassifier):
+    def __init__(self):
+        super().__init__(
+            local_model_dir="models/finepdfs-edu-classifier",
+            hf_model_id="HuggingFaceFW/finepdfs_edu_classifier_v2_eng_Latn",
+            batch_size=16,
+            max_length=512,
+        )
+
+    def _postprocess(self, doc_batch, outputs, inputs):
+        scores = outputs.logits.detach().cpu().view(-1).tolist()
+        results = []
+        for doc, score in zip(doc_batch, scores):
+            bounded_score = float(score)
+            int_score = int(round(max(0, min(bounded_score, 5))))
+            result = self._doc_metadata(doc)
+            result.update({"score": bounded_score, "int_score": int_score})
+            results.append(result)
+        return results
+
+
+class FinePDFsDCLMClassifier(TransformersClassifier):
+    def __init__(self):
+        super().__init__(
+            local_model_dir="models/finepdfs-dclm-classifier",
+            hf_model_id="HuggingFaceFW/finepdfs_dclm_classifier_eng_Latn",
+            batch_size=16,
+        )
+
+    def _postprocess(self, doc_batch, outputs, inputs):
+        scores = outputs.logits.detach().cpu().view(-1).tolist()
+        results = []
+        for doc, score in zip(doc_batch, scores):
+            bounded_score = float(score)
+            int_score = int(round(max(0, min(bounded_score, 5))))
+            result = self._doc_metadata(doc)
+            result.update({"score": bounded_score, "int_score": int_score})
+            results.append(result)
         return results

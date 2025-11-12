@@ -11,29 +11,25 @@ from utils import (
 )
 from analysis import analyze_and_plot
 from abc import ABC, abstractmethod
-from models import DCLMClassifier, TextbookFastTextClassifier, FinewebEduClassifier, GaperonClassifier
+from models import DCLMClassifier, TextbookFastTextClassifier, FinewebEduClassifier, GaperonClassifier, FinePDFsEduClassifier, FinePDFsDCLMClassifier
 from rich.console import Console
 from huggingface_hub import hf_hub_download
 
-# Set a random seed for reproducibility
 random.seed(42)
 np.random.seed(42)
 torch.manual_seed(42)
 
 console = Console()
 
-CLASSIFIERS = [GaperonClassifier, FinewebEduClassifier, DCLMClassifier, TextbookFastTextClassifier]
+CLASSIFIERS = [GaperonClassifier, FinewebEduClassifier, DCLMClassifier, TextbookFastTextClassifier, FinePDFsEduClassifier, FinePDFsDCLMClassifier]
 
 def download_all_models():
-    """
-    Download all required models to the local 'models' folder.
-    """
+    """Download all required models to the local 'models' folder."""
     from huggingface_hub import hf_hub_download
     import shutil
 
     console.rule("[bold blue]Downloading all required models...[/bold blue]")
 
-    # DCLM FastText model
     dclm_path = "models/openhermes_reddit_eli5_vs_rw_v2_bigram_200k_train.bin"
     if not os.path.exists(dclm_path):
         bin_path = hf_hub_download("mlfoundations/fasttext-oh-eli5", "openhermes_reddit_eli5_vs_rw_v2_bigram_200k_train.bin")
@@ -43,7 +39,6 @@ def download_all_models():
     else:
         console.log(f"[green]DCLM FastText model already exists at {dclm_path}.[/green]")
 
-    # Textbook FastText model
     tb_path = "models/textbook_model.bin"
     if not os.path.exists(tb_path):
         console.log(f"[yellow]Downloading Textbook FastText model to {tb_path}...[/yellow]")
@@ -54,7 +49,6 @@ def download_all_models():
     else:
         console.log(f"[green]Textbook FastText model already exists at {tb_path}.[/green]")
 
-    # FinewebEduClassifier model and tokenizer
     from transformers import AutoTokenizer, AutoModelForSequenceClassification
     model_dir = "models/fineweb-edu-classifier"
     if not os.path.exists(model_dir):
@@ -69,7 +63,6 @@ def download_all_models():
     except Exception as e:
         console.log(f"[red]Error downloading FinewebEduClassifier: {e}[/red]")
     
-    # Gaperon classifier
     model_dir = "models/gaperon-classifier"
     if not os.path.exists(model_dir):
         os.makedirs(model_dir, exist_ok=True)
@@ -87,20 +80,20 @@ def download_all_models():
 
     console.rule("[bold green]All models downloaded.[/bold green]")
 
-def main(inject_inside=True, num_docs=100000, prefilter_hq=False, min_hq_score=0.5, fineweb_path="HuggingFaceFW/fineweb"):
+def main(inject_inside=True, num_docs=100000, prefilter_hq=False, min_hq_score=0.5, fineweb_path="HuggingFaceFW/fineweb", mmlu_count=3, mmlu_subjects=None):
     console.rule("[bold blue]Haystack Experiment Start[/bold blue]")
     console.log(f"[bold green]Running experiment with {'injected' if inject_inside else 'separate'} benchmarks on "
                 f"{'pre-filtered high-quality' if prefilter_hq else 'unfiltered'} documents[/bold green]")
 
-    # 1. Load benchmark samples first to know how many there are
     console.log("[yellow]Loading benchmark samples...[/yellow]")
-    mmlu_samples = load_benchmark_samples("mmlu", count=3, subjects=["anatomy", "computer_security", "high_school_geography", "moral_scenarios", "college_physics"])
+    if mmlu_subjects is None:
+        mmlu_subjects = ["anatomy", "computer_security", "high_school_geography", "moral_scenarios", "college_physics"]
+    mmlu_samples = load_benchmark_samples("mmlu", count=mmlu_count, subjects=mmlu_subjects)
     gsm8k_samples = load_benchmark_samples("gsm8k", count=10)
     gpqa_samples = load_benchmark_samples("gpqa", count=10)
     all_benchmarks = mmlu_samples + gsm8k_samples + gpqa_samples
     num_benchmarks = len(all_benchmarks)
 
-    # 2. Compute number of fineweb docs to load
     if inject_inside:
         num_fineweb_docs = num_docs
     else:
@@ -108,7 +101,6 @@ def main(inject_inside=True, num_docs=100000, prefilter_hq=False, min_hq_score=0
         if num_fineweb_docs < 1:
             raise ValueError("Number of documents too small for the number of benchmarks.")
 
-    # 3. Load documents
     documents = load_fineweb_documents(
         num_fineweb_docs,
         prefilter_hq=prefilter_hq,
@@ -116,23 +108,19 @@ def main(inject_inside=True, num_docs=100000, prefilter_hq=False, min_hq_score=0
         fineweb_path=fineweb_path
     )
 
-    # 4. Inject benchmarks
     benchmark_positions = inject_benchmarks_into_documents(
         documents, mmlu_samples, gsm8k_samples, gpqa_samples, inject_inside=inject_inside
     )
 
-    # 5. Check final doc count
     assert len(documents) == num_docs, f"Final document count {len(documents)} != requested {num_docs}"
     console.log(f"[bold green]Total documents after benchmark injection: {len(documents)}[/bold green]")
 
-    # 6. Score documents with all classifiers
     results = {}
     for clf_class in CLASSIFIERS:
         console.rule(f"[bold blue]Scoring with {clf_class.__name__}[/bold blue]")
         clf = clf_class()
         results[clf.__class__.__name__] = clf.score_documents(documents)
 
-    # 7. Analyze and plot results
     console.rule("[bold blue]Analyzing and plotting results...[/bold blue]")
     analyze_and_plot(results, documents, benchmark_positions)
 
@@ -147,16 +135,24 @@ if __name__ == "__main__":
     parser.add_argument("--min-hq-score", type=float, default=0.7, help="Minimum high-quality score threshold")
     parser.add_argument("--download-models", action="store_true", help="Download all required models and exit")
     parser.add_argument("--fineweb-path", type=str, default="HuggingFaceFW/fineweb", help="Path or HF repo for fineweb dataset")
+    parser.add_argument("--mmlu-count", type=int, default=3, help="Number of MMLU samples per subject (default: 3)")
+    parser.add_argument("--mmlu-subjects", type=str, default=None, help="Comma-separated list of MMLU subjects (default: anatomy,computer_security,high_school_geography,moral_scenarios,college_physics)")
     args = parser.parse_args()
 
     if args.download_models:
         download_all_models()
         exit(0)
 
+    mmlu_subjects = None
+    if args.mmlu_subjects:
+        mmlu_subjects = [s.strip() for s in args.mmlu_subjects.split(",")]
+
     main(
         inject_inside=not args.separate,
         num_docs=args.num_docs,
         prefilter_hq=args.prefilter_hq,
         min_hq_score=args.min_hq_score,
-        fineweb_path=args.fineweb_path
+        fineweb_path=args.fineweb_path,
+        mmlu_count=args.mmlu_count,
+        mmlu_subjects=mmlu_subjects
     )
