@@ -11,26 +11,42 @@ class DropoutContext:
         self.scale = 1
         self.reuse_mask = True
 
+def get_mask(input, local_context):
+    if not isinstance(local_context, DropoutContext):
+        dropout = local_context
+        mask = None
+    else:
+        dropout = local_context.dropout
+        dropout *= local_context.scale
+        mask = local_context.mask if local_context.reuse_mask else None
+    
+    if dropout > 0 and mask is None:
+        mask = (1 - torch.empty_like(input).bernoulli_(1 - dropout)).bool()
+    
+    if isinstance(local_context, DropoutContext):
+        if local_context.mask is None:
+            local_context.mask = mask
+    
+    return mask, dropout
+
 class XDropout(torch.autograd.Function):
     @staticmethod
     def forward(ctx, input, local_ctx):
-        if isinstance(local_ctx, float):
-            p = local_ctx
-            mask = torch.bernoulli(torch.ones_like(input) * (1 - p))
+        mask, dropout = get_mask(input, local_ctx)
+        ctx.scale = 1.0 / (1 - dropout)
+        if dropout > 0:
+            ctx.save_for_backward(mask)
+            return input.masked_fill(mask, 0) * ctx.scale
         else:
-            p = local_ctx.dropout
-            if local_ctx.reuse_mask and local_ctx.mask is not None:
-                mask = local_ctx.mask
-            else:
-                mask = torch.bernoulli(torch.ones_like(input) * (1 - p))
-                if local_ctx.reuse_mask:
-                    local_ctx.mask = mask
-        ctx.scale = 1 / (1 - p) if not isinstance(local_ctx, float) else 1 / (1 - p)
-        return input * mask * ctx.scale
+            return input
     
     @staticmethod
     def backward(ctx, grad_output):
-        return grad_output * ctx.scale, None
+        if ctx.scale > 1:
+            (mask,) = ctx.saved_tensors
+            return grad_output.masked_fill(mask, 0) * ctx.scale, None
+        else:
+            return grad_output, None
 
 class StableDropout(nn.Module):
     def __init__(self, drop_prob):
@@ -67,8 +83,35 @@ class StableDropout(nn.Module):
         else:
             return self.drop_prob
 
+class ContextPooler(nn.Module):
+    def __init__(self, config):
+        super().__init__()
+        self.dense = nn.Linear(config.pooler_hidden_size, config.pooler_hidden_size)
+        self.dropout = StableDropout(config.pooler_dropout)
+        self.config = config
+    
+    def forward(self, hidden_states):
+        context_token = hidden_states[:, 0]
+        context_token = self.dropout(context_token)
+        pooled_output = self.dense(context_token)
+        from transformers.activations import ACT2FN
+        pooled_output = ACT2FN[self.config.pooler_hidden_act](pooled_output)
+        return pooled_output
+    
+    @property
+    def output_dim(self):
+        return self.config.hidden_size
+
 def inject_stabledropout():
-    if 'transformers.models.deberta_v2.modeling_deberta_v2' not in sys.modules:
-        sys.modules['transformers.models.deberta_v2.modeling_deberta_v2'] = ModuleType('modeling_deberta_v2')
-    sys.modules['transformers.models.deberta_v2.modeling_deberta_v2'].StableDropout = StableDropout
+    try:
+        import transformers.models.deberta_v2.modeling_deberta_v2 as deberta_module
+    except ImportError:
+        deberta_module = ModuleType('modeling_deberta_v2')
+        sys.modules['transformers.models.deberta_v2.modeling_deberta_v2'] = deberta_module
+    
+    deberta_module.StableDropout = StableDropout
+    deberta_module.DropoutContext = DropoutContext
+    deberta_module.XDropout = XDropout
+    deberta_module.get_mask = get_mask
+    deberta_module.ContextPooler = ContextPooler
 
