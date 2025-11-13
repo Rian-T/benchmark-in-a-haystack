@@ -9,11 +9,15 @@ from rich.console import Console
 
 console = Console()
 
-def analyze_and_plot(results, documents, benchmark_positions, inject_inside=True, prefilter_hq=False):
+def analyze_and_plot(results, documents, benchmark_positions, output_base_dir="results", inject_inside=True, prefilter_hq=False, num_docs=100000):
     """Output benchmark sample ranks across classifiers and create visualizations."""
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    results_dir = os.path.join("results", timestamp)
+    results_dir = os.path.join(output_base_dir, timestamp)
     os.makedirs(results_dir, exist_ok=True)
+    
+    mode_suffix = "injected" if inject_inside else "separate"
+    prefilter_suffix = "_prefiltered" if prefilter_hq else ""
+    file_suffix = f"_{mode_suffix}{prefilter_suffix}_{num_docs}docs"
 
     all_benchmark_ranks = []
     plot_data = []
@@ -49,7 +53,7 @@ def analyze_and_plot(results, documents, benchmark_positions, inject_inside=True
         all_benchmark_ranks.append(bench_df)
         plot_data.append(bench_df[["classifier", "benchmark_type", "rank", "percentile"]])
 
-    bench_ranks_json = os.path.join(results_dir, "benchmark_ranks_all_classifiers.json")
+    bench_ranks_json = os.path.join(results_dir, f"benchmark_ranks_all_classifiers{file_suffix}.json")
     with open(bench_ranks_json, "w") as f:
         json.dump(list(bench_ranks_dict.values()), f, indent=2)
     console.log(f"[green]Saved all benchmark ranks to {bench_ranks_json}[/green]")
@@ -69,48 +73,53 @@ def analyze_and_plot(results, documents, benchmark_positions, inject_inside=True
     plot_df = pd.DataFrame(plot_rows)
 
     console.log("[yellow]Plotting benchmark sample ranks by classifier and benchmark type...[/yellow]")
-    plt.figure(figsize=(10, 6))
+    num_classifiers = len(results)
+    fig_height = max(8, num_classifiers * 0.8)
+    
+    plt.figure(figsize=(14, fig_height))
     ax = sns.stripplot(
         data=plot_df,
         x="rank",
         y="classifier",
         hue="benchmark_type",
         dodge=True,
-        jitter=True,
-        size=8,
-        alpha=0.8,
-        linewidth=0.5,
-        edgecolor="gray"
+        jitter=0.3,
+        size=10,
+        alpha=0.75,
+        linewidth=1,
+        edgecolor="black"
     )
-    plt.title("Benchmark Sample Ranks by Classifier")
-    plt.xlabel("Rank (lower is better)")
-    plt.ylabel("Classifier")
-    plt.legend(title="Benchmark Type", bbox_to_anchor=(1.05, 1), loc='upper left')
+    plt.title(f"Benchmark Sample Ranks by Classifier ({mode_suffix.capitalize()}, {num_docs:,} docs)", fontsize=14, fontweight='bold')
+    plt.xlabel("Rank (lower is better)", fontsize=12)
+    plt.ylabel("Classifier", fontsize=12)
+    plt.legend(title="Benchmark Type", bbox_to_anchor=(1.02, 1), loc='upper left', frameon=True, shadow=True)
+    plt.grid(axis='x', alpha=0.3, linestyle='--')
     plt.tight_layout()
-    plot_path = os.path.join(results_dir, "benchmark_ranks_by_classifier.png")
-    plt.savefig(plot_path)
+    plot_path = os.path.join(results_dir, f"benchmark_ranks_by_classifier{file_suffix}.png")
+    plt.savefig(plot_path, dpi=150, bbox_inches='tight')
     plt.close()
     console.log(f"[bold green]Saved plot to {plot_path}[/bold green]")
 
-    plt.figure(figsize=(10, 6))
+    plt.figure(figsize=(14, fig_height))
     ax = sns.stripplot(
         data=plot_df,
         x="percentile",
         y="classifier",
         hue="benchmark_type",
         dodge=True,
-        jitter=True,
-        size=8,
-        alpha=0.8,
-        linewidth=0.5,
-        edgecolor="gray"
+        jitter=0.3,
+        size=10,
+        alpha=0.75,
+        linewidth=1,
+        edgecolor="black"
     )
-    plt.title("Benchmark Sample Percentiles by Classifier")
-    plt.xlabel("Percentile (higher is better)")
-    plt.ylabel("Classifier")
-    plt.legend(title="Benchmark Type", bbox_to_anchor=(1.05, 1), loc='upper left')
+    plt.title(f"Benchmark Sample Percentiles by Classifier ({mode_suffix.capitalize()}, {num_docs:,} docs)", fontsize=14, fontweight='bold')
+    plt.xlabel("Percentile (higher is better)", fontsize=12)
+    plt.ylabel("Classifier", fontsize=12)
+    plt.legend(title="Benchmark Type", bbox_to_anchor=(1.02, 1), loc='upper left', frameon=True, shadow=True)
+    plt.grid(axis='x', alpha=0.3, linestyle='--')
     plt.tight_layout()
-    plot_path_pct = os.path.join(results_dir, "benchmark_percentiles_by_classifier.png")
-    plt.savefig(plot_path_pct)
+    plot_path_pct = os.path.join(results_dir, f"benchmark_percentiles_by_classifier{file_suffix}.png")
+    plt.savefig(plot_path_pct, dpi=150, bbox_inches='tight')
     plt.close()
     console.log(f"[bold green]Saved plot to {plot_path_pct}[/bold green]")

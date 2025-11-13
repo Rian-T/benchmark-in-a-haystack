@@ -59,7 +59,16 @@ def main(config_path="config.yaml"):
         clf = clf_class()
         results[clf_config["name"]] = clf.score_documents(documents)
     
-    analyze_and_plot(results, documents, benchmark_positions)
+    output_base_dir = config.get("output", {}).get("base_dir", "results")
+    analyze_and_plot(
+        results, 
+        documents, 
+        benchmark_positions, 
+        output_base_dir=output_base_dir, 
+        inject_inside=inject_inside,
+        prefilter_hq=config["dataset"]["prefilter_hq"],
+        num_docs=num_docs
+    )
     console.rule("[bold green]Analysis completed.[/bold green]")
 
 if __name__ == "__main__":

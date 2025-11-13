@@ -4,6 +4,9 @@ experiment:
   seed: 42
   inject_inside: true  # true = inject benchmarks into docs, false = separate docs
 
+output:
+  base_dir: "results"  # base output directory
+
 dataset:
   num_docs: 100000
   fineweb_path: "HuggingFaceFW/fineweb"
@@ -35,8 +38,12 @@ classifiers:
     enabled: true
   - name: FinePDFsEduClassifier
     enabled: true
+  - name: FinePDFsEduClassifierV2
+    enabled: true
   - name: FinePDFsDCLMClassifier
     enabled: true
   - name: NemoCuratorEduClassifier
-    enabled: false
+    enabled: true
+  - name: EuroFilterClassifier
+    enabled: true
 
