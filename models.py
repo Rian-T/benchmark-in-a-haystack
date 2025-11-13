@@ -23,24 +23,19 @@ class DCLMClassifier(DocumentClassifier):
 
     @staticmethod
     def _load_model():
+        import shutil
+        from huggingface_hub import hf_hub_download
+        
         model_path = "models/openhermes_reddit_eli5_vs_rw_v2_bigram_200k_train.bin"
         if not os.path.exists(model_path):
             console.log(f"[yellow]Model not found at {model_path}. Downloading...[/yellow]")
             os.makedirs("models", exist_ok=True)
-            url = "https://huggingface.co/mlfoundations/fasttext-oh-eli5/raw/main/openhermes_reddit_eli5_vs_rw_v2_bigram_200k_train.bin"
-            with Progress(
-                SpinnerColumn(),
-                TextColumn("[progress.description]{task.description}"),
-                BarColumn(),
-                TimeElapsedColumn(),
-                console=console,
-            ) as progress:
-                task = progress.add_task("[green]Downloading FastText model...", total=None)
-                response = requests.get(url, stream=True)
-                with open(model_path, "wb") as f:
-                    for chunk in response.iter_content(chunk_size=8192):
-                        f.write(chunk)
-                progress.update(task, completed=1)
+            # Download using hf_hub_download (proper way to download from HuggingFace)
+            downloaded_path = hf_hub_download(
+                "mlfoundations/fasttext-oh-eli5",
+                "openhermes_reddit_eli5_vs_rw_v2_bigram_200k_train.bin"
+            )
+            shutil.copy(downloaded_path, model_path)
             console.log(f"[green]Model downloaded to {model_path}.[/green]")
         from utils import load_fasttext_model  # import here to avoid circular import
         return load_fasttext_model(model_path)
@@ -135,7 +130,7 @@ class FinewebEduClassifier(DocumentClassifier):
         console.log("[bold cyan]Scoring documents with FinewebEduClassifier...[/bold cyan]")
         results = []
         for idx_batch in tqdm(range(0, len(documents), self.batch_size)):
-            doc_batch = [documents[idx_batch+inbatch_idx] for inbatch_idx in range(self.batch_size)]
+            doc_batch = documents[idx_batch:idx_batch + self.batch_size]
             text_batch = [doc["text"] for doc in doc_batch]
             inputs = self.tokenizer(text_batch, return_tensors="pt", padding="longest", truncation=True).to(self.device)
             with torch.no_grad():
@@ -198,7 +193,7 @@ class GaperonClassifier(DocumentClassifier):
         console.log("[bold cyan]Scoring documents with GaperonClassifier...[/bold cyan]")
         results = []
         for idx_batch in tqdm(range(0, len(documents), self.batch_size)):
-            doc_batch = [documents[idx_batch+inbatch_idx] for inbatch_idx in range(self.batch_size)]
+            doc_batch = documents[idx_batch:idx_batch + self.batch_size]
             text_batch = [doc["text"] for doc in doc_batch]
             inputs = self.tokenizer(text_batch, return_tensors="pt", padding="longest", truncation=True, max_length=512).to(self.device)
             inputs = {k: v[:, :512] for k, v in inputs.items()}
