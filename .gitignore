@@ -158,3 +158,4 @@ fastText/
 models/
 old/
 results/
+cache/*.db

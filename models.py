@@ -3,6 +3,7 @@ import re
 import hashlib
 import json
 import shutil
+import sqlite3
 import torch
 import fasttext
 from pathlib import Path
@@ -20,8 +21,21 @@ console = Console()
 class DocumentClassifier(ABC):
     
     def __init__(self):
-        self.cache_dir = Path("cache") / self.__class__.__name__
-        self.cache_dir.mkdir(parents=True, exist_ok=True)
+        cache_dir = Path("cache")
+        cache_dir.mkdir(exist_ok=True)
+        self.cache_db = cache_dir / f"{self.__class__.__name__}.db"
+        self._init_cache()
+    
+    def _init_cache(self):
+        conn = sqlite3.connect(self.cache_db)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS cache (
+                doc_hash TEXT PRIMARY KEY,
+                result TEXT NOT NULL
+            )
+        """)
+        conn.commit()
+        conn.close()
     
     @abstractmethod
     def _score_single_document(self, document):
@@ -69,22 +83,20 @@ class DocumentClassifier(ABC):
         return hashlib.sha256(content.encode('utf-8')).hexdigest()
     
     def _load_from_cache(self, document):
-        cache_path = self.cache_dir / f"{self._get_document_hash(document)}.json"
-        if cache_path.exists():
-            try:
-                with open(cache_path, 'r') as f:
-                    return json.load(f)
-            except (json.JSONDecodeError, IOError):
-                return None
-        return None
+        doc_hash = self._get_document_hash(document)
+        conn = sqlite3.connect(self.cache_db)
+        cursor = conn.execute("SELECT result FROM cache WHERE doc_hash = ?", (doc_hash,))
+        row = cursor.fetchone()
+        conn.close()
+        return json.loads(row[0]) if row else None
     
     def _save_to_cache(self, document, result):
-        cache_path = self.cache_dir / f"{self._get_document_hash(document)}.json"
-        try:
-            with open(cache_path, 'w') as f:
-                json.dump(result, f)
-        except IOError as e:
-            console.log(f"[yellow]Warning: Could not save to cache: {e}[/yellow]")
+        doc_hash = self._get_document_hash(document)
+        conn = sqlite3.connect(self.cache_db)
+        conn.execute("INSERT OR REPLACE INTO cache (doc_hash, result) VALUES (?, ?)", 
+                    (doc_hash, json.dumps(result)))
+        conn.commit()
+        conn.close()
     
     def score_documents(self, documents):
         classifier_name = self.__class__.__name__
