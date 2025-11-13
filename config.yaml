@@ -2,7 +2,7 @@
 
 experiment:
   seed: 42
-  inject_inside: true  # true = inject benchmarks into docs, false = separate docs
+  inject_inside: false  # true = inject benchmarks into docs, false = separate docs
 
 output:
   base_dir: "results"  # base output directory
