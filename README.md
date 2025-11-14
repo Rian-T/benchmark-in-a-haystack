@@ -14,14 +14,14 @@ pip install -r requirements.txt
 
 ## Usage
 
-Download models first:
-```bash
-python haystack.py --download-models
-```
-
 Run experiment:
 ```bash
 python haystack.py --config config.yaml
+```
+
+If you want to download models first for offline use:
+```bash
+python haystack.py --download-models
 ```
 
 ## Configuration
