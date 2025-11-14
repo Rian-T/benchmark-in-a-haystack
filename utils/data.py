@@ -110,44 +110,44 @@ def format_benchmark_text(sample, benchmark_type, subject=None):
     benchmark = BENCHMARKS[benchmark_type]
     return benchmark.format_sample(sample, subject=subject)
 
-def inject_benchmarks_into_documents(documents, mmlu_samples, gsm8k_samples=None, gpqa_samples=None, inject_inside=True):
-    """Add benchmark samples either by injecting them or creating separate documents."""
+def inject_benchmarks_into_documents(documents, benchmark_samples_dict, inject_inside=True):
+    """Add benchmark samples either by injecting them or creating separate documents.
+    
+    Args:
+        documents: List of documents to inject benchmarks into
+        benchmark_samples_dict: Dictionary mapping benchmark_type to list of samples
+        inject_inside: Whether to inject into existing docs or create separate ones
+    """
     console.rule(f"[bold blue]Adding benchmark samples as {'injected content' if inject_inside else 'separate documents'}...[/bold blue]")
     benchmark_positions = []
     
     num_docs = len(documents)
-    ranges = {
-        "mmlu": (0, int(0.4*num_docs)),
-        "gsm8k": (int(0.5*num_docs), int(0.9*num_docs)),
-        "gpqa": (int(0.4*num_docs), int(0.5*num_docs))
-    }
+    
+    # Dynamically create ranges based on the number of benchmarks
+    benchmark_types = list(benchmark_samples_dict.keys())
+    num_benchmarks = len(benchmark_types)
+    
+    if num_benchmarks > 0:
+        # Divide the document range equally among benchmarks
+        range_size = 1.0 / num_benchmarks
+        ranges = {}
+        for i, benchmark_type in enumerate(benchmark_types):
+            start = int(i * range_size * num_docs)
+            end = int((i + 1) * range_size * num_docs)
+            ranges[benchmark_type] = (start, min(end, num_docs - 1))
+    else:
+        ranges = {}
     
     all_samples = []
     
-    for i, sample in enumerate(mmlu_samples):
-        all_samples.append({
-            "sample": sample,
-            "benchmark_type": "mmlu",
-            "index": i,
-            "subject": sample.get("subject", None)
-        })
-    
-    if gsm8k_samples:
-        for i, sample in enumerate(gsm8k_samples):
+    # Dynamically process all benchmark samples from the dictionary
+    for benchmark_type, samples in benchmark_samples_dict.items():
+        for i, sample in enumerate(samples):
             all_samples.append({
                 "sample": sample,
-                "benchmark_type": "gsm8k",
+                "benchmark_type": benchmark_type,
                 "index": i,
-                "subject": None
-            })
-    
-    if gpqa_samples:
-        for i, sample in enumerate(gpqa_samples):
-            all_samples.append({
-                "sample": sample,
-                "benchmark_type": "gpqa",
-                "index": i,
-                "subject": None
+                "subject": sample.get("subject", None)
             })
     
     for benchmark in all_samples:
@@ -316,11 +316,15 @@ def analyze_benchmark_effect(documents, benchmark_positions, benchmark_ranks, mo
     console.rule("[bold blue]Benchmark Effect Analysis...[/bold blue]")
     results = []
     
+    # Get all registered benchmark types dynamically
+    from benchmarks import BENCHMARKS
+    registered_benchmark_types = list(BENCHMARKS.keys())
+    
     for i, pos in enumerate(benchmark_positions):
         doc_index = pos["doc_index"]
         doc = documents[doc_index]
         
-        if doc["source"] in ["mmlu", "gsm8k", "gpqa"]:
+        if doc["source"] in registered_benchmark_types:
             benchmark_type = doc["benchmark_type"]
             benchmark_index = doc["benchmark_index"]
             benchmark_score = float(benchmark_ranks[benchmark_ranks["id"] == doc["id"]].iloc[0]["score"])

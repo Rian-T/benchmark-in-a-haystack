@@ -7,9 +7,12 @@ experiment:
 output:
   base_dir: "results"  # base output directory
 
+models:
+  offline_dir: "models"  # directory for downloaded models
+
 dataset:
   num_docs: 100000
-  fineweb_path: "HuggingFaceFW/fineweb"
+  fineweb_path: "HuggingFaceFW/fineweb-edu"  # Options: "HuggingFaceFW/fineweb" or "HuggingFaceFW/fineweb-edu"
   prefilter_hq: false
   min_hq_score: 0.7
 
@@ -26,24 +29,40 @@ benchmarks:
     count: 10
   gpqa:
     count: 10
+  arc_challenge:
+    count: 10
+  arc_easy:
+    count: 10
+  hellaswag:
+    count: 10
+  piqa:
+    count: 10
+  truthfulqa:
+    count: 10
 
 classifiers:
   - name: DCLMClassifier
     enabled: true
-  - name: TextbookFastTextClassifier
-    enabled: true
+  # - name: TextbookFastTextClassifier
+  #   enabled: true
   - name: FinewebEduClassifier
     enabled: true
+    batch_size: 32
   - name: GaperonClassifier
     enabled: true
+    batch_size: 32
   - name: FinePDFsEduClassifier
     enabled: true
-  - name: FinePDFsEduClassifierV2
-    enabled: true
-  - name: FinePDFsDCLMClassifier
-    enabled: true
+    batch_size: 32
+  # - name: FinePDFsEduClassifierV2
+  #   enabled: true
+  #   batch_size: 32
+  # - name: FinePDFsDCLMClassifier
+  #   enabled: true
+  #   batch_size: 32
   - name: NemoCuratorEduClassifier
     enabled: true
+    batch_size: 32
   - name: EuroFilterClassifier
     enabled: true
-
+    batch_size: 32

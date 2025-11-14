@@ -1,35 +1,103 @@
 import os
+import shutil
 import hashlib
 import json
-import sqlite3
 import torch
 from pathlib import Path
 from abc import ABC, abstractmethod
 from transformers import AutoTokenizer, AutoModelForSequenceClassification
+from huggingface_hub import hf_hub_download
 from rich.console import Console
 
 
 console = Console()
 
 
+def download_fasttext_model(hub_repo, hub_filename, local_filename, models_dir="models"):
+    """
+    Generic utility to download a FastText model from HuggingFace Hub.
+    
+    Args:
+        hub_repo: HuggingFace Hub repository name
+        hub_filename: Filename in the Hub repository
+        local_filename: Local filename to save as
+        models_dir: Directory to save models to
+    """
+    model_path = os.path.join(models_dir, local_filename)
+    if os.path.exists(model_path):
+        console.log(f"[green]Model already exists at {model_path}[/green]")
+        return model_path
+    
+    console.log(f"[yellow]Downloading FastText model to {model_path}...[/yellow]")
+    os.makedirs(models_dir, exist_ok=True)
+    downloaded_path = hf_hub_download(hub_repo, hub_filename)
+    shutil.copy(downloaded_path, model_path)
+    console.log(f"[green]Model downloaded to {model_path}.[/green]")
+    return model_path
+
+
+def download_transformer_model(hub_name, local_dirname, models_dir="models", trust_remote_code=False, torch_dtype=None):
+    """
+    Generic utility to download a Transformer model from HuggingFace Hub.
+    
+    Args:
+        hub_name: HuggingFace Hub model name
+        local_dirname: Local directory name to save as
+        models_dir: Base directory to save models to
+        trust_remote_code: Whether to trust remote code
+        torch_dtype: Optional torch dtype for the model
+    
+    Returns:
+        Path to the downloaded model directory
+    """
+    model_dir = os.path.join(models_dir, local_dirname)
+    
+    if os.path.exists(model_dir) and os.path.isdir(model_dir):
+        console.log(f"[green]Model already exists at {model_dir}[/green]")
+        return model_dir
+    
+    console.log(f"[yellow]Downloading transformer model to {model_dir}...[/yellow]")
+    os.makedirs(models_dir, exist_ok=True)
+    
+    model_kwargs = {}
+    if trust_remote_code:
+        model_kwargs['trust_remote_code'] = True
+    if torch_dtype:
+        model_kwargs['torch_dtype'] = torch_dtype
+    
+    # Download and save the model
+    tokenizer = AutoTokenizer.from_pretrained(hub_name)
+    model = AutoModelForSequenceClassification.from_pretrained(hub_name, **model_kwargs)
+    
+    tokenizer.save_pretrained(model_dir)
+    model.save_pretrained(model_dir)
+    console.log(f"[green]Model downloaded to {model_dir}.[/green]")
+    return model_dir
+
+
 class DocumentClassifier(ABC):
     
-    def __init__(self):
-        cache_dir = Path("cache")
-        cache_dir.mkdir(exist_ok=True)
-        self.cache_db = cache_dir / f"{self.__class__.__name__}.db"
-        self._init_cache()
+    def __init__(self, config=None):
+        # Extract dataset name from config (e.g., "fineweb" or "fineweb-edu")
+        dataset_name = "fineweb"  # default
+        if config and "dataset_name" in config:
+            dataset_name = config["dataset_name"]
+        
+        # Create dataset-specific cache directory
+        cache_dir = Path("cache") / dataset_name
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        self.cache_file = cache_dir / f"{self.__class__.__name__}.json"
+        self._cache = self._load_cache()
     
-    def _init_cache(self):
-        conn = sqlite3.connect(self.cache_db)
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS cache (
-                doc_hash TEXT PRIMARY KEY,
-                result TEXT NOT NULL
-            )
-        """)
-        conn.commit()
-        conn.close()
+    def _load_cache(self):
+        if self.cache_file.exists():
+            with open(self.cache_file, 'r') as f:
+                return json.load(f)
+        return {}
+    
+    def _save_cache(self):
+        with open(self.cache_file, 'w') as f:
+            json.dump(self._cache, f)
     
     @abstractmethod
     def _score_single_document(self, document):
@@ -76,23 +144,8 @@ class DocumentClassifier(ABC):
         content = f"{document['id']}:{document['text']}"
         return hashlib.sha256(content.encode('utf-8')).hexdigest()
     
-    def _load_from_cache(self, document):
-        doc_hash = self._get_document_hash(document)
-        conn = sqlite3.connect(self.cache_db)
-        cursor = conn.execute("SELECT result FROM cache WHERE doc_hash = ?", (doc_hash,))
-        row = cursor.fetchone()
-        conn.close()
-        return json.loads(row[0]) if row else None
-    
-    def _save_to_cache(self, document, result):
-        doc_hash = self._get_document_hash(document)
-        conn = sqlite3.connect(self.cache_db)
-        conn.execute("INSERT OR REPLACE INTO cache (doc_hash, result) VALUES (?, ?)", 
-                    (doc_hash, json.dumps(result)))
-        conn.commit()
-        conn.close()
-    
     def score_documents(self, documents):
+        from tqdm import tqdm
         classifier_name = self.__class__.__name__
         console.log(f"[bold cyan]Scoring documents with {classifier_name} (with caching)...[/bold cyan]")
         
@@ -100,9 +153,9 @@ class DocumentClassifier(ABC):
         cache_hits = cache_misses = 0
         
         for doc in documents:
-            cached_result = self._load_from_cache(doc)
-            if cached_result is not None:
-                results.append(cached_result)
+            doc_hash = self._get_document_hash(doc)
+            if doc_hash in self._cache:
+                results.append(self._cache[doc_hash])
                 cache_hits += 1
             else:
                 docs_to_score.append(doc)
@@ -112,10 +165,11 @@ class DocumentClassifier(ABC):
         
         if docs_to_score:
             new_results = self._score_documents_impl(docs_to_score)
-            for result in new_results:
-                doc = next(d for d in docs_to_score if d['id'] == result['id'])
-                self._save_to_cache(doc, result)
+            for doc, result in zip(docs_to_score, new_results):
+                doc_hash = self._get_document_hash(doc)
+                self._cache[doc_hash] = result
                 results.append(result)
+            self._save_cache()
         
         doc_id_to_idx = {doc['id']: idx for idx, doc in enumerate(documents)}
         results.sort(key=lambda r: doc_id_to_idx[r['id']])

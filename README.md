@@ -1,15 +1,10 @@
 # Benchmark in a Haystack
 
-Evaluate how quality filters rank benchmark samples. Insert benchmark items (MMLU, GSM8K, GPQA) into a corpus and measure their ranking by different quality classifiers.
+<div align="center">
+  <img src="biahs-banner.png" alt="Benchmark in a Haystack Banner" width="800">
+</div>
 
-## Citation
-
-Based on methodology from:
-```
-Godey, N., Antoun, W., Touchent, R., Bawden, R., de la Clergerie, É., Sagot, B., & Seddah, D. (2025).
-Gaperon: A Peppered English-French Generative Language Model Suite.
-arXiv preprint arXiv:2510.25771.
-```
+Evaluate how quality filters rank benchmark samples. Insert benchmark items (MMLU, GSM8K, GPQA, ARC, HellaSwag, PIQA, TruthfulQA) into a corpus and measure their ranking by different quality classifiers.
 
 ## Installation
 
@@ -26,17 +21,19 @@ python haystack.py --download-models
 
 Run experiment:
 ```bash
-python haystack.py --num-docs 100000
+python haystack.py --config config.yaml
 ```
 
-## Options
+## Configuration
 
-- `--num-docs N`: Number of documents (default: 100000)
-- `--mmlu-count N`: Samples per MMLU subject (default: 3)
-- `--mmlu-subjects`: Comma-separated subjects (default: anatomy,computer_security,high_school_geography,moral_scenarios,college_physics)
-- `--separate`: Create separate documents for benchmarks instead of injecting
-- `--prefilter-hq`: Use only high-quality FineWeb documents
-- `--min-hq-score`: Minimum quality score threshold (default: 0.7)
+Edit `config.yaml` to configure:
+
+- `num_docs`: Number of documents (default: 100000)
+- `inject_inside`: true = inject benchmarks into docs, false = separate docs (default: false)
+- `prefilter_hq`: Use only high-quality FineWeb documents (default: false)
+- `min_hq_score`: Minimum quality score threshold (default: 0.7)
+- `benchmarks`: Configure count and subjects per benchmark
+- `classifiers`: Enable/disable classifiers and set batch sizes
 
 ## Output
 
@@ -47,18 +44,91 @@ Results saved to `results/TIMESTAMP/`:
 
 ## Classifiers
 
-- **DCLMClassifier**: Instruction/ELI5-style filter
-- **FinewebEduClassifier**: Educational value filter
-- **TextbookFastTextClassifier**: Textbook quality filter
-- **GaperonClassifier**: General quality filter
+- DCLMClassifier
+- FinewebEduClassifier
+- GaperonClassifier
+- NemoCuratorEduClassifier
+- EuroFilterClassifier
+- TextbookFastTextClassifier
+- FinePDFsEduClassifier
+- FinePDFsEduClassifierV2
+- FinePDFsDCLMClassifier
 
 ## Adding Benchmarks
 
-Edit `benchmarks.py`, implement `load_samples` and `format_sample`, register in `BENCHMARKS`.
+To add a new benchmark, edit `benchmarks.py`:
+
+1. **Create a class** that inherits from `Benchmark` ABC
+
+2. **Define class attributes** (optional but recommended):
+   - `dataset`: HuggingFace dataset name (e.g., `"cais/mmlu"`)
+   - `split`: Dataset split to use (e.g., `"test"`, `"validation"`)
+   - `config` or `name`: Dataset configuration if needed
+   - `format_template`: String template for formatting samples
+
+3. **Implement required methods**:
+
+   - `load_samples(self, count=5, subjects=None)`: Load samples from the dataset
+     - **Returns**: List of dicts with keys:
+       - `"data"`: The raw sample from the dataset
+       - `"benchmark_type"`: String identifier for your benchmark
+       - `"subject"` (optional): Subject name if applicable
+     - Use `random.sample()` to select random samples if needed
+     - Handle `subjects` parameter if your benchmark has categories (like MMLU)
+
+   - `format_sample(self, sample, subject=None)`: Convert a sample to text
+     - **Parameters**: 
+       - `sample`: Dict from `load_samples()` with `"data"` key
+       - `subject`: Optional subject name
+     - **Returns**: Formatted string ready for insertion into corpus
+     - Use `format_template.format()` for consistent formatting
+
+4. **Register** your benchmark in the `BENCHMARKS` dict at the bottom of the file:
+   ```python
+   BENCHMARKS = {
+       "your_benchmark": YourBenchmark(),
+       ...
+   }
+   ```
+
+**Example**: See `GSM8KBenchmark` for a simple benchmark or `MMLUBenchmark` for one with subject categories.
 
 ## Adding Classifiers
 
-Edit `models.py`, inherit from `DocumentClassifier`, implement `score_documents`, add to `CLASSIFIERS` in `haystack.py`.
+To add a new classifier, edit `models.py` and choose the appropriate base class:
+
+### Option 1: FastText-based Classifier (like DCLMClassifier)
+
+Inherit from `DocumentClassifier` and implement:
+
+- `__init__(self, classifier_config=None)`: Initialize your model
+- `_score_documents_impl(self, documents)`: Score documents and return results list
+- `download_model(models_dir="models")`: Static method to download model files
+
+### Option 2: Transformer-based Classifier (like FinewebEduClassifier)
+
+Inherit from `TransformerClassifier` and implement:
+
+- `get_model_config(self)`: Return dict with `model_dir`, `hub_name`, `trust_remote_code` (optional), `max_length` (optional), `torch_dtype` (optional)
+- `process_outputs(self, outputs, doc_batch)`: Process model outputs into results list with keys: `id`, `source`, `contains_benchmark`, `benchmark_type`, `benchmark_index`, `score`
+- `_process_inputs(self, inputs)` (optional): Modify inputs before passing to model
+
+After implementing your classifier, add it to the `classifiers` section in `config.yaml`.
+
+## Citation
+
+Based on methodology from:
+```
+@misc{godey2025gaperonpepperedenglishfrenchgenerative,
+      title={Gaperon: A Peppered English-French Generative Language Model Suite}, 
+      author={Nathan Godey and Wissam Antoun and Rian Touchent and Rachel Bawden and Éric de la Clergerie and Benoît Sagot and Djamé Seddah},
+      year={2025},
+      eprint={2510.25771},
+      archivePrefix={arXiv},
+      primaryClass={cs.CL},
+      url={https://arxiv.org/abs/2510.25771}, 
+}
+```
 
 ## License
 

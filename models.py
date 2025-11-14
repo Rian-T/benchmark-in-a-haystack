@@ -1,36 +1,50 @@
 import os
 import re
-import shutil
 import torch
 import fasttext
 from abc import abstractmethod
-from huggingface_hub import hf_hub_download
 from rich.console import Console
 from rich.progress import Progress, SpinnerColumn, BarColumn, TextColumn, TimeElapsedColumn
 from tqdm import tqdm
-from utils import DocumentClassifier, score_documents, load_fasttext_model
+from utils import (
+    DocumentClassifier,
+    score_documents,
+    load_fasttext_model,
+    download_fasttext_model,
+    download_transformer_model
+)
 
 
 console = Console()
 
 class DCLMClassifier(DocumentClassifier):
-    def __init__(self):
-        super().__init__()
+    def __init__(self, classifier_config=None):
+        super().__init__(classifier_config)
         console.log("[bold cyan]Initializing DCLMClassifier...[/bold cyan]")
-        self.model = self._load_model()
+        models_dir = classifier_config.get("models_dir", "models") if classifier_config else "models"
+        self.model = self._load_model(models_dir)
 
     @staticmethod
-    def _load_model():
-        model_path = "models/openhermes_reddit_eli5_vs_rw_v2_bigram_200k_train.bin"
+    def download_model(models_dir="models"):
+        """Download the DCLM model to the specified directory."""
+        download_fasttext_model(
+            hub_repo="mlfoundations/fasttext-oh-eli5",
+            hub_filename="openhermes_reddit_eli5_vs_rw_v2_bigram_200k_train.bin",
+            local_filename="openhermes_reddit_eli5_vs_rw_v2_bigram_200k_train.bin",
+            models_dir=models_dir
+        )
+
+    @staticmethod
+    def _load_model(models_dir="models"):
+        model_path = os.path.join(models_dir, "openhermes_reddit_eli5_vs_rw_v2_bigram_200k_train.bin")
         if not os.path.exists(model_path):
             console.log(f"[yellow]Model not found at {model_path}. Downloading...[/yellow]")
-            os.makedirs("models", exist_ok=True)
-            downloaded_path = hf_hub_download(
-                "mlfoundations/fasttext-oh-eli5",
-                "openhermes_reddit_eli5_vs_rw_v2_bigram_200k_train.bin"
+            download_fasttext_model(
+                hub_repo="mlfoundations/fasttext-oh-eli5",
+                hub_filename="openhermes_reddit_eli5_vs_rw_v2_bigram_200k_train.bin",
+                local_filename="openhermes_reddit_eli5_vs_rw_v2_bigram_200k_train.bin",
+                models_dir=models_dir
             )
-            shutil.copy(downloaded_path, model_path)
-            console.log(f"[green]Model downloaded to {model_path}.[/green]")
         return load_fasttext_model(model_path)
 
     def _score_single_document(self, document):
@@ -41,32 +55,48 @@ class DCLMClassifier(DocumentClassifier):
         return score_documents(documents, self.model)
 
 class TextbookFastTextClassifier(DocumentClassifier):
-    def __init__(self):
-        super().__init__()
+    def __init__(self, classifier_config=None):
+        super().__init__(classifier_config)
         console.log("[bold cyan]Initializing TextbookFastTextClassifier...[/bold cyan]")
-        self.model = self._load_model()
+        models_dir = classifier_config.get("models_dir", "models") if classifier_config else "models"
+        self.model = self._load_model(models_dir)
 
     @staticmethod
-    def _load_model():
-        model_path = "models/textbook_model.bin"
+    def download_model(models_dir="models"):
+        """Download the Textbook FastText model to the specified directory."""
+        download_fasttext_model(
+            hub_repo="kenhktsui/llm-data-textbook-quality-fasttext-classifer-v1",
+            hub_filename="model.bin",
+            local_filename="textbook_model.bin",
+            models_dir=models_dir
+        )
+
+    @staticmethod
+    def _load_model(models_dir="models"):
+        model_path = os.path.join(models_dir, "textbook_model.bin")
         if os.path.exists(model_path):
             console.log(f"[yellow]Loading Textbook FastText model from local {model_path}...[/yellow]")
             return fasttext.load_model(model_path)
         else:
-            console.log("[yellow]Loading Textbook FastText model from HuggingFace Hub...[/yellow]")
-            return fasttext.load_model(
-                hf_hub_download("kenhktsui/llm-data-textbook-quality-fasttext-classifer-v1", "model.bin")
+            console.log("[yellow]Model not found locally. Downloading Textbook FastText model...[/yellow]")
+            download_fasttext_model(
+                hub_repo="kenhktsui/llm-data-textbook-quality-fasttext-classifer-v1",
+                hub_filename="model.bin",
+                local_filename="textbook_model.bin",
+                models_dir=models_dir
             )
+            return fasttext.load_model(model_path)
 
     def _score_single_document(self, document):
         pass
 
     def _score_documents_impl(self, documents):
         console.log("[bold cyan]Scoring documents with TextbookFastTextClassifier...[/bold cyan]")
-        texts = [re.sub(r"\n+", " ", doc["text"]) for doc in documents]
+        texts = [re.sub(r"\n+", " ", doc["text"]) for doc in tqdm(documents, desc="🔄 Preprocessing text", unit="doc")]
+        console.log("[yellow]Running FastText inference (C++ backend, no progress available)...[/yellow]")
         preds = self.model.predict(texts)
         results = []
-        for doc, labels, scores in tqdm(zip(documents, preds[0], preds[1])):
+        for doc, labels, scores in tqdm(zip(documents, preds[0], preds[1]), desc="📊 Formatting results", total=len(documents), unit="doc"):
             label = labels[0].lstrip("__label__")
             score = scores[0]
             results.append({
@@ -82,17 +112,36 @@ class TextbookFastTextClassifier(DocumentClassifier):
 
 class TransformerClassifier(DocumentClassifier):
     
-    def __init__(self):
-        super().__init__()
+    def __init__(self, classifier_config=None):
+        super().__init__(classifier_config)
         console.log(f"[bold cyan]Initializing {self.__class__.__name__}...[/bold cyan]")
         config = self.get_model_config()
+        models_dir = classifier_config.get("models_dir", "models") if classifier_config else "models"
+        # Update model_dir to use models_dir from config
+        model_dir = os.path.join(models_dir, os.path.basename(config['model_dir']))
         self.tokenizer, self.model, self.device = self._load_transformer_model(
-            config['model_dir'], 
+            model_dir, 
             config['hub_name'], 
             config.get('trust_remote_code', False),
             config.get('torch_dtype')
         )
-        self.batch_size = 100
+        # Use batch_size from classifier_config if provided, otherwise default to 100
+        self.batch_size = classifier_config.get('batch_size', 100) if classifier_config else 100
+
+    @classmethod
+    def download_model(cls, models_dir="models"):
+        """Download the transformer model to the specified directory."""
+        # Create a temporary instance to get config (without initializing full model)
+        config = cls.__new__(cls).get_model_config()
+        local_dirname = os.path.basename(config['model_dir'])
+        
+        download_transformer_model(
+            hub_name=config['hub_name'],
+            local_dirname=local_dirname,
+            models_dir=models_dir,
+            trust_remote_code=config.get('trust_remote_code', False),
+            torch_dtype=config.get('torch_dtype')
+        )
 
     @abstractmethod
     def get_model_config(self):
@@ -108,7 +157,8 @@ class TransformerClassifier(DocumentClassifier):
     def _score_documents_impl(self, documents):
         console.log(f"[bold cyan]Scoring documents with {self.__class__.__name__}...[/bold cyan]")
         results = []
-        for idx_batch in tqdm(range(0, len(documents), self.batch_size)):
+        num_batches = (len(documents) + self.batch_size - 1) // self.batch_size
+        for idx_batch in tqdm(range(0, len(documents), self.batch_size), desc=f"⚡ {self.__class__.__name__}: Inference", total=num_batches, unit="batch"):
             doc_batch = documents[idx_batch:idx_batch + self.batch_size]
             text_batch = [doc["text"] for doc in doc_batch]
             
@@ -222,15 +272,33 @@ class NemoCuratorEduClassifier(TransformerClassifier):
 
 class FinePDFsClassifierBase(DocumentClassifier):
     
-    def __init__(self):
-        super().__init__()
+    def __init__(self, classifier_config=None):
+        super().__init__(classifier_config)
         console.log(f"[bold cyan]Initializing {self.__class__.__name__}...[/bold cyan]")
         config = self.get_model_config()
+        models_dir = classifier_config.get("models_dir", "models") if classifier_config else "models"
+        # Update model_dir to use models_dir from config
+        model_dir = os.path.join(models_dir, os.path.basename(config['model_dir']))
         self.tokenizer, self.model, self.device = self._load_transformer_model(
-            config['model_dir'], config['hub_name']
+            model_dir, config['hub_name']
         )
         self.CHUNK_SIZE = 2046
         self.MAX_CHARS = 10_000
+        # Use batch_size from classifier_config if provided, otherwise default to 1 (original behavior)
+        self.batch_size = classifier_config.get('batch_size', 1) if classifier_config else 1
+    
+    @classmethod
+    def download_model(cls, models_dir="models"):
+        """Download the FinePDFs model to the specified directory."""
+        # Create a temporary instance to get config (without initializing full model)
+        config = cls.__new__(cls).get_model_config()
+        local_dirname = os.path.basename(config['model_dir'])
+        
+        download_transformer_model(
+            hub_name=config['hub_name'],
+            local_dirname=local_dirname,
+            models_dir=models_dir
+        )
     
     @abstractmethod
     def get_model_config(self):
@@ -266,25 +334,49 @@ class FinePDFsClassifierBase(DocumentClassifier):
     def _score_documents_impl(self, documents):
         console.log(f"[bold cyan]Scoring documents with {self.__class__.__name__}...[/bold cyan]")
         results = []
+        num_batches = (len(documents) + self.batch_size - 1) // self.batch_size
         
-        for doc in tqdm(documents):
-            scores = []
-            for chunk in self._create_text_chunks(doc["text"]):
-                inputs = self.tokenizer(chunk, return_tensors="pt", padding="longest", truncation=True).to(self.device)
+        for idx_batch in tqdm(range(0, len(documents), self.batch_size), desc=f"⚡ {self.__class__.__name__}: Inference", total=num_batches, unit="batch"):
+            doc_batch = documents[idx_batch:idx_batch + self.batch_size]
+            
+            # Collect all chunks from all documents in the batch
+            all_chunks = []
+            doc_chunk_mapping = []  # Track which chunks belong to which document
+            
+            for doc_idx, doc in enumerate(doc_batch):
+                chunks = self._create_text_chunks(doc["text"])
+                chunk_start_idx = len(all_chunks)
+                all_chunks.extend(chunks)
+                doc_chunk_mapping.append((doc_idx, chunk_start_idx, len(all_chunks)))
+            
+            # Process all chunks in one batch
+            if all_chunks:
+                inputs = self.tokenizer(all_chunks, return_tensors="pt", padding="longest", truncation=True).to(self.device)
                 with torch.no_grad():
                     outputs = self.model(**inputs)
-                scores.append(outputs.logits.squeeze(-1).float().detach().cpu().numpy().item())
+                all_scores = outputs.logits.squeeze(-1).float().detach().cpu().numpy()
+                
+                # If only one chunk, ensure it's an array
+                if len(all_chunks) == 1:
+                    all_scores = [all_scores.item()]
+                else:
+                    all_scores = all_scores.tolist()
             
-            final_score = max(scores)
-            results.append({
-                "id": doc["id"],
-                "source": doc["source"],
-                "contains_benchmark": doc["contains_benchmark"],
-                "benchmark_type": doc["benchmark_type"],
-                "benchmark_index": doc.get("benchmark_index", None),
-                "score": float(final_score),
-                "int_score": int(round(max(0, min(final_score, 5))))
-            })
+            # Map scores back to documents and take max per document
+            for doc_idx, chunk_start, chunk_end in doc_chunk_mapping:
+                doc = doc_batch[doc_idx]
+                doc_scores = all_scores[chunk_start:chunk_end]
+                final_score = max(doc_scores)
+                
+                results.append({
+                    "id": doc["id"],
+                    "source": doc["source"],
+                    "contains_benchmark": doc["contains_benchmark"],
+                    "benchmark_type": doc["benchmark_type"],
+                    "benchmark_index": doc.get("benchmark_index", None),
+                    "score": float(final_score),
+                    "int_score": int(round(max(0, min(final_score, 5))))
+                })
         
         return results
 
@@ -334,7 +426,7 @@ class EuroFilterClassifier(TransformerClassifier):
             score = max(0, min(score, 5))
             int_score = int(round(score))
             
-            prob = torch.nn.functional.sigmoid(outputs.binary_logits[i_doc]).cpu().numpy().item()
+            prob = torch.nn.functional.sigmoid(outputs.binary_logits[i_doc]).float().cpu().numpy().item()
             binary_pred = 1 if prob >= 0.5 else 0
             
             results.append({
