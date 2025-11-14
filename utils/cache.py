@@ -13,6 +13,63 @@ from rich.console import Console
 console = Console()
 
 
+def save_top_documents_texts(results: dict, documents: list, dataset_name: str, top_n: int = 100):
+    """Cache the text of top N documents per classifier.
+    
+    This saves document texts for the highest-scoring documents to avoid
+    needing to stream from datasets later during visualization.
+    Merges with existing cache to preserve texts from previous runs.
+    
+    Args:
+        results: Dictionary mapping classifier names to list of score dictionaries
+        documents: List of document dictionaries (with 'id' and 'text' fields)
+        dataset_name: Name of the dataset (e.g., 'fineweb', 'fineweb-edu')
+        top_n: Number of top documents to cache per classifier (default: 100)
+    """
+    console.log(f"[bold cyan]Caching top {top_n} document texts per classifier...[/bold cyan]")
+    
+    # Create cache directory
+    cache_dir = Path("cache") / dataset_name
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    cache_file = cache_dir / "top_documents_texts.json"
+    
+    # Load existing cache if it exists
+    existing_cache = {}
+    if cache_file.exists():
+        try:
+            with open(cache_file, 'r') as f:
+                existing_cache = json.load(f)
+            console.log(f"[green]Loaded {len(existing_cache)} existing cached texts[/green]")
+        except Exception as e:
+            console.log(f"[yellow]Could not load existing cache: {e}[/yellow]")
+    
+    # Create a mapping from document ID to document text
+    doc_id_to_text = {doc['id']: doc['text'] for doc in documents}
+    
+    # Start with existing cache
+    top_docs_cache = existing_cache.copy()
+    new_texts_added = 0
+    
+    for clf_name, scores in results.items():
+        # Sort by score descending and take top N
+        sorted_scores = sorted(scores, key=lambda x: x['score'], reverse=True)[:top_n]
+        
+        console.log(f"[yellow]Processing top {top_n} documents for {clf_name}...[/yellow]")
+        
+        for score_data in sorted_scores:
+            doc_id = score_data['id']
+            # Add text if we have it and it's not already cached
+            if doc_id not in top_docs_cache and doc_id in doc_id_to_text:
+                top_docs_cache[doc_id] = doc_id_to_text[doc_id]
+                new_texts_added += 1
+    
+    # Save merged cache to JSON file
+    with open(cache_file, 'w') as f:
+        json.dump(top_docs_cache, f, indent=2)
+    
+    console.log(f"[bold green]Cached {len(top_docs_cache)} total document texts ({new_texts_added} new) to {cache_file}[/bold green]")
+
+
 def download_fasttext_model(hub_repo, hub_filename, local_filename, models_dir="models"):
     """
     Generic utility to download a FastText model from HuggingFace Hub.

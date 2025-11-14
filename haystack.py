@@ -6,6 +6,7 @@ from utils import (
     set_seed,
     get_models_dir
 )
+from utils.cache import save_top_documents_texts
 from analysis import analyze_and_plot
 from rich.console import Console
 import models
@@ -67,7 +68,8 @@ def main(config_path="config.yaml"):
         num_fineweb_docs,
         prefilter_hq=config["dataset"]["prefilter_hq"],
         min_hq_score=config["dataset"]["min_hq_score"],
-        fineweb_path=config["dataset"]["fineweb_path"]
+        fineweb_path=config["dataset"]["fineweb_path"],
+        subset=config["dataset"].get("subset", "sample-10BT")
     )
     
     benchmark_positions = inject_benchmarks_into_documents(
@@ -81,7 +83,14 @@ def main(config_path="config.yaml"):
     
     # Extract dataset name from fineweb_path for cache organization
     fineweb_path = config["dataset"]["fineweb_path"]
-    dataset_name = fineweb_path.split("/")[-1] if "/" in fineweb_path else fineweb_path
+    subset = config["dataset"].get("subset", "sample-10BT")
+    dataset_base = fineweb_path.split("/")[-1] if "/" in fineweb_path else fineweb_path
+    
+    # For non-standard subsets (not sample-10BT or empty), include subset in dataset name for better cache organization
+    if subset and subset != "sample-10BT":
+        dataset_name = f"{dataset_base}-{subset}"
+    else:
+        dataset_name = dataset_base
     console.log(f"[cyan]Using dataset: {dataset_name}[/cyan]")
     
     results = {}
@@ -97,6 +106,10 @@ def main(config_path="config.yaml"):
         console.rule(f"[bold blue]Scoring with {clf_config['name']}[/bold blue]")
         clf = clf_class(clf_config_with_models)
         results[clf_config["name"]] = clf.score_documents(documents)
+    
+    # Cache top document texts for visualization
+    top_n_cache = config.get("cache", {}).get("top_n_documents", 100)
+    save_top_documents_texts(results, documents, dataset_name, top_n=top_n_cache)
     
     output_base_dir = config.get("output", {}).get("base_dir", "results")
     analyze_and_plot(

@@ -17,10 +17,19 @@ from rich.progress import Progress, SpinnerColumn, BarColumn, TextColumn, TimeEl
 
 console = Console()
 
-def load_fineweb_documents(num_docs=100000, prefilter_hq=False, min_hq_score=0.5, fineweb_path="HuggingFaceFW/fineweb"):
-    """Load documents from the fineweb dataset."""
+def load_fineweb_documents(num_docs=100000, prefilter_hq=False, min_hq_score=0.5, fineweb_path="HuggingFaceFW/fineweb", subset="sample-10BT"):
+    """Load documents from the fineweb dataset.
+    
+    Args:
+        num_docs: Number of documents to load
+        prefilter_hq: Whether to pre-filter documents for quality
+        min_hq_score: Minimum quality score for filtering
+        fineweb_path: HuggingFace dataset path (e.g., "HuggingFaceFW/fineweb", "HuggingFaceFW/fineweb-edu", "HuggingFaceFW/fineweb-2")
+        subset: Dataset subset/configuration name (e.g., "sample-10BT" for fineweb, "fra_Latn" for fineweb-2)
+    """
     console.rule("[bold blue]Loading fineweb dataset...[/bold blue]")
-    fineweb = load_dataset(fineweb_path, name="sample-10BT", split="train", streaming=True)
+    console.log(f"[cyan]Dataset: {fineweb_path}, Subset: {subset}[/cyan]")
+    fineweb = load_dataset(fineweb_path, name=subset, split="train", streaming=True)
     
     documents = []
     
