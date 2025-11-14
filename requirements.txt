@@ -1,4 +1,4 @@
-numpy
+numpy==1.26
 torch
 datasets
 tqdm
@@ -10,4 +10,4 @@ rich
 matplotlib
 seaborn
 pyyaml
-
+scipy

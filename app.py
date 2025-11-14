@@ -10,18 +10,9 @@ import warnings
 warnings.filterwarnings('ignore')
 
 CACHE_BASE_DIR = Path("cache")
-# Use the same standard colors as analysis.py matplotlib plots
 COLOR_PALETTE = [
-    '#1f77b4',  # blue
-    '#ff7f0e',  # orange
-    '#2ca02c',  # green
-    '#d62728',  # red
-    '#9467bd',  # purple
-    '#8c564b',  # brown
-    '#e377c2',  # pink
-    '#7f7f7f',  # gray
-    '#bcbd22',  # olive
-    '#17becf',  # cyan
+    '#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd',
+    '#8c564b', '#e377c2', '#7f7f7f', '#bcbd22', '#17becf',
 ]
 
 def get_available_datasets() -> list[str]:
@@ -31,14 +22,7 @@ def get_available_datasets() -> list[str]:
     return [d.name for d in CACHE_BASE_DIR.iterdir() if d.is_dir()]
 
 def load_cached_document_texts(dataset_name: str) -> dict[str, str]:
-    """Load cached document texts from the top_documents_texts.json file.
-    
-    Args:
-        dataset_name: Name of the dataset (e.g., 'fineweb')
-    
-    Returns:
-        Dictionary mapping doc_id to text content
-    """
+    """Load cached document texts from the top_documents_texts.json file."""
     cache_file = CACHE_BASE_DIR / dataset_name / "top_documents_texts.json"
     
     if not cache_file.exists():
@@ -54,11 +38,7 @@ def load_cached_document_texts(dataset_name: str) -> dict[str, str]:
 
 def load_cache_files(dataset_name: str = None) -> dict[str, pd.DataFrame]:
     """Load cache files for a specific dataset."""
-    if dataset_name:
-        cache_dir = CACHE_BASE_DIR / dataset_name
-    else:
-        # Fallback to old behavior for backwards compatibility
-        cache_dir = CACHE_BASE_DIR
+    cache_dir = CACHE_BASE_DIR / dataset_name if dataset_name else CACHE_BASE_DIR
     
     if not cache_dir.exists():
         return {}
@@ -107,7 +87,13 @@ def plot_comparison(benchmark_df: pd.DataFrame,
     
     df = benchmark_df.copy()
     if selected_benchmarks and "All" not in selected_benchmarks:
-        df = df[df['benchmark_type'].isin(selected_benchmarks)]
+        if "Gaperon paper" in selected_benchmarks:
+            gaperon_benchmarks = ['mmlu', 'gsm8k', 'gpqa']
+            other_benchmarks = [b for b in selected_benchmarks if b != "Gaperon paper"]
+            combined_benchmarks = gaperon_benchmarks + other_benchmarks
+            df = df[df['benchmark_type'].isin(combined_benchmarks)]
+        else:
+            df = df[df['benchmark_type'].isin(selected_benchmarks)]
     if selected_classifiers and "All" not in selected_classifiers:
         df = df[df['classifier'].isin(selected_classifiers)]
     
@@ -116,37 +102,27 @@ def plot_comparison(benchmark_df: pd.DataFrame,
         fig.add_annotation(text="No data matching filters", showarrow=False, font=dict(size=16))
         return fig
     
-    # Match analysis.py styling
     if metric == "rank":
-        y_label = "Rank (0 = best)"
+        x_label = "Rank (0 = best)"
         title_text = "Benchmark Sample Ranks by Classifier"
     else:
-        y_label = "Percentile (higher is better)"
+        x_label = "Percentile (higher is better)"
         title_text = "Benchmark Sample Percentiles by Classifier"
     
     fig = px.strip(
         df, 
-        x='classifier', 
-        y=metric, 
+        y='classifier',
+        x=metric,
         color='benchmark_type',
         hover_data=['id', 'score', 'rank', 'percentile'],
         color_discrete_sequence=COLOR_PALETTE,
     )
     
-    # Update markers to match matplotlib style
     fig.update_traces(
-        marker=dict(
-            size=13,  # Larger markers like matplotlib
-            opacity=0.75,
-            line=dict(width=1.5, color='white')  # White edge like matplotlib
-        ),
-        jitter=0.3  # Add jitter like matplotlib stripplot
+        marker=dict(size=13, opacity=0.75, line=dict(width=1.5, color='white')),
+        jitter=0.3
     )
     
-    # Get number of documents for subtitle
-    num_docs = len(df.groupby(['classifier', 'id']).first())
-    
-    # Update layout to match matplotlib style from analysis.py
     fig.update_layout(
         title={
             'text': title_text,
@@ -156,22 +132,21 @@ def plot_comparison(benchmark_df: pd.DataFrame,
             'y': 0.98,
             'yanchor': 'top'
         },
-        xaxis_title={
+        yaxis_title={
             'text': "Classifier",
             'font': {'size': 16, 'color': '#34495e', 'family': 'Arial, sans-serif'}
         },
-        yaxis_title={
-            'text': y_label,
+        xaxis_title={
+            'text': x_label,
             'font': {'size': 15, 'color': '#34495e', 'family': 'Arial, sans-serif'}
         },
         hovermode='closest',
         width=1400,
         height=750,
-        plot_bgcolor='#f8f9fa',  # Light gray background like matplotlib
+        plot_bgcolor='#f8f9fa',
         paper_bgcolor='white',
         font={'family': 'Arial, sans-serif', 'size': 12},
-        xaxis=dict(
-            tickangle=45,
+        yaxis=dict(
             tickfont={'size': 14, 'color': '#2c3e50'},
             showgrid=False,
             showline=True,
@@ -179,7 +154,7 @@ def plot_comparison(benchmark_df: pd.DataFrame,
             linecolor='#bdc3c7',
             mirror=True
         ),
-        yaxis=dict(
+        xaxis=dict(
             tickfont={'size': 12, 'color': '#2c3e50'},
             showgrid=True,
             gridcolor='#95a5a6',
@@ -202,12 +177,20 @@ def plot_comparison(benchmark_df: pd.DataFrame,
             borderwidth=1.5,
             font={'size': 12}
         ),
-        margin=dict(t=80, b=100, l=80, r=150)
+        margin=dict(t=80, b=100, l=150, r=150)
     )
     
-    # Reverse Y-axis for rank (0 at top, like matplotlib)
+    num_classifiers = len(df['classifier'].unique())
+    for i in range(num_classifiers - 1):
+        fig.add_hline(
+            y=i + 0.5,
+            line_color='#bdc3c7',
+            line_width=1.2,
+            opacity=0.5
+        )
+    
     if metric == "rank":
-        fig.update_yaxes(autorange="reversed")
+        fig.update_xaxes(autorange="reversed")
     
     return fig
 
@@ -230,23 +213,11 @@ def create_summary_table(benchmark_df: pd.DataFrame) -> pd.DataFrame:
     return stats.sort_values('Mean Rank')
 
 def get_top_documents_per_classifier(combined_df: pd.DataFrame, dataset_name: str, top_n: int = 10) -> dict[str, str]:
-    """Get the top N highest-scoring documents for each classifier.
-    
-    Args:
-        combined_df: DataFrame with all scored documents
-        dataset_name: Name of the dataset to load texts from
-        top_n: Number of top documents to retrieve per classifier
-    
-    Returns:
-        Dictionary mapping classifier name to plain text string with formatted documents
-    """
+    """Get the top N highest-scoring documents for each classifier."""
     if combined_df.empty:
         return {}
     
-    # Get unique classifiers
     classifiers = sorted(combined_df['classifier'].unique())
-    
-    # Collect all doc IDs we need to load
     all_doc_ids = set()
     top_docs_by_classifier = {}
     
@@ -256,16 +227,11 @@ def get_top_documents_per_classifier(combined_df: pd.DataFrame, dataset_name: st
         top_docs_by_classifier[classifier] = clf_data
         all_doc_ids.update(clf_data['id'].tolist())
     
-    # Load texts from cache
     doc_texts = load_cached_document_texts(dataset_name)
-    
-    # Build simple text output for each classifier
     result = {}
     
     for classifier in classifiers:
         clf_data = top_docs_by_classifier[classifier]
-        
-        # Calculate min and max scores for this classifier
         clf_all_data = combined_df[combined_df['classifier'] == classifier]
         min_score = clf_all_data['score'].min()
         max_score = clf_all_data['score'].max()
@@ -279,14 +245,10 @@ def get_top_documents_per_classifier(combined_df: pd.DataFrame, dataset_name: st
             is_benchmark = row.get('contains_benchmark', False)
             benchmark_type = row.get('benchmark_type', 'N/A')
             
-            # Get full text (no truncation)
             text = doc_texts.get(doc_id, "[Text not cached - run haystack.py to cache top documents]")
-            
-            # Create badge
             badge = "🔴 BENCHMARK" if is_benchmark else "🟢 Regular"
             benchmark_info = f" | Type: {benchmark_type}" if is_benchmark else ""
             
-            # Document header
             text_parts.append(f"\n{'-'*100}")
             text_parts.append(f"Top {top_rank} | {classifier} | {badge} | ID: {doc_id} | Score: {score:.6f} | Range: {min_score:.6f}–{max_score:.6f}{benchmark_info}")
             text_parts.append(f"{'-'*100}")
@@ -310,7 +272,6 @@ def create_app():
     
     print(f"Found datasets: {', '.join(available_datasets)}")
     
-    # Preload ALL datasets
     print("Preloading all datasets for instant switching...")
     all_datasets_data = {}
     for dataset_name in available_datasets:
@@ -336,7 +297,6 @@ def create_app():
     
     print("✓ All datasets loaded successfully\n")
     
-    # Use first dataset with data as default
     default_dataset = list(all_datasets_data.keys())[0]
     combined_df = all_datasets_data[default_dataset]['combined']
     benchmark_df = all_datasets_data[default_dataset]['benchmark']
@@ -344,7 +304,7 @@ def create_app():
     benchmark_types = all_datasets_data[default_dataset]['benchmark_types']
     
     with gr.Blocks(theme=gr.themes.Soft(), title="Benchmark in a Haystack") as app:
-        gr.HTML('<img src="file/biahs-banner.png" style="width: 50%; height: auto;">')
+        gr.Image("biahs-banner.png", show_label=False, show_download_button=False, width=800)
         gr.Markdown("Compare how quality classifiers rank benchmark samples.")
         
         with gr.Row():
@@ -361,7 +321,7 @@ def create_app():
                     label="Metric"
                 )
                 benchmark_filter = gr.CheckboxGroup(
-                    choices=["All"] + benchmark_types,
+                    choices=["All", "Gaperon paper"] + benchmark_types,
                     value=["All"],
                     label="Benchmark Types"
                 )
@@ -388,10 +348,7 @@ def create_app():
         
         gr.Markdown("### Top 10 Highest-Scoring Documents per Classifier")
         
-        # Get initial top documents data
         initial_docs = get_top_documents_per_classifier(combined_df, default_dataset, top_n=10)
-        
-        # Create separate textbox for each classifier
         classifier_textboxes = {}
         for classifier in classifiers:
             gr.Markdown(f"#### {classifier}")
@@ -403,7 +360,6 @@ def create_app():
                 interactive=False
             )
         
-        # State to store all preloaded datasets and current dataset info
         all_data_state = gr.State(all_datasets_data)
         current_data = gr.State((combined_df, benchmark_df, classifiers, benchmark_types, default_dataset))
         
@@ -417,30 +373,26 @@ def create_app():
                     pd.DataFrame(),
                     (pd.DataFrame(), pd.DataFrame(), [], [], dataset_name)
                 ]
-                # Add empty update for each classifier textbox
                 for _ in classifiers:
                     empty_results.append("No data available")
                 return tuple(empty_results)
             
-            # Get preloaded data (instant!)
             data = all_datasets[dataset_name]
             combined = data['combined']
             benchmark = data['benchmark']
             clfs = data['classifiers']
             bench_types = data['benchmark_types']
             
-            # Get documents for each classifier
             docs_by_classifier = get_top_documents_per_classifier(combined, dataset_name, top_n=10)
             
             results = [
-                gr.update(choices=["All"] + bench_types, value=["All"]),
+                gr.update(choices=["All", "Gaperon paper"] + bench_types, value=["All"]),
                 gr.update(choices=["All"] + clfs, value=["All"]),
                 plot_comparison(benchmark, ["All"], ["All"], "rank"),
                 create_summary_table(benchmark),
                 (combined, benchmark, clfs, bench_types, dataset_name)
             ]
             
-            # Add textbox update for each classifier
             for clf in classifiers:
                 results.append(docs_by_classifier.get(clf, "No data"))
             
@@ -451,7 +403,6 @@ def create_app():
             _, benchmark, _, _, _ = data_state
             return plot_comparison(benchmark, bench_filter, clf_filter, metric)
         
-        # Build outputs list with all classifier textboxes
         outputs_list = [benchmark_filter, classifier_filter, comparison_plot, summary_table, current_data]
         outputs_list.extend(list(classifier_textboxes.values()))
         
@@ -461,7 +412,6 @@ def create_app():
             outputs=outputs_list
         )
         
-        # Auto-update plot when filters or metric changes
         metric_radio.change(
             fn=update_plot,
             inputs=[metric_radio, benchmark_filter, classifier_filter, current_data],
