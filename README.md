@@ -1,13 +1,5 @@
----
-title: benchmark-in-a-haystack
-app_file: app.py
-sdk: gradio
-sdk_version: 5.49.1
----
-# Benchmark in a Haystack
-
 <div align="center">
-  <img src="biahs-banner.png" alt="Benchmark in a Haystack Banner" width="800">
+  <img src="biahs-banner.png" alt="Benchmark in a Haystack Banner">
 </div>
 
 Evaluate how quality filters rank benchmark samples. Insert benchmark items (MMLU, GSM8K, GPQA, ARC, HellaSwag, PIQA, TruthfulQA) into a corpus and measure their ranking by different quality classifiers.
