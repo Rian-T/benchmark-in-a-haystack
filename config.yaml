@@ -12,8 +12,8 @@ models:
 
 dataset:
   num_docs: 100000
-  fineweb_path: "HuggingFaceFW/fineweb-2"  # Options: "HuggingFaceFW/fineweb", "HuggingFaceFW/fineweb-edu", or "HuggingFaceFW/fineweb-2"
-  subset: "fra_Latn"  # For fineweb/fineweb-edu: "sample-10BT". For fineweb-2: language codes like "eng_Latn", "fra_Latn", "deu_Latn", etc.
+  fineweb_path: "HuggingFaceFW/fineweb"  # Options: "HuggingFaceFW/fineweb", "HuggingFaceFW/fineweb-edu", or "HuggingFaceFW/fineweb-2"
+  subset: "sample-10BT"  # For fineweb/fineweb-edu: "sample-10BT". For fineweb-2: language codes like "eng_Latn", "fra_Latn", "deu_Latn", etc.
   prefilter_hq: false
   min_hq_score: 0.7
 
@@ -44,23 +44,23 @@ benchmarks:
 classifiers:
   - name: DCLMClassifier
     enabled: true
-  # - name: TextbookFastTextClassifier
-  #   enabled: true
+  - name: TextbookFastTextClassifier
+    enabled: true
   - name: FinewebEduClassifier
     enabled: true
     batch_size: 32
   - name: GaperonClassifier
     enabled: true
     batch_size: 32
-  # - name: FinePDFsEduClassifier
-  #   enabled: true
-  #   batch_size: 32
-  # - name: FinePDFsEduClassifierV2
-  #   enabled: true
-  #   batch_size: 32
-  # - name: FinePDFsDCLMClassifier
-  #   enabled: true
-  #   batch_size: 32
+  - name: FinePDFsEduClassifier
+    enabled: true
+    batch_size: 32
+  - name: FinePDFsEduClassifierV2
+    enabled: true
+    batch_size: 32
+  - name: FinePDFsDCLMClassifier
+    enabled: true
+    batch_size: 32
   - name: NemoCuratorEduClassifier
     enabled: true
     batch_size: 32

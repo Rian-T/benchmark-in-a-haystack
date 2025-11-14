@@ -195,7 +195,8 @@ class FinewebEduClassifier(TransformerClassifier):
         for i_doc, doc in enumerate(doc_batch):
             logits = outputs.logits[i_doc].float().detach().cpu().numpy()
             score = logits.item()
-            int_score = int(round(max(0, min(score, 5))))
+            score = max(0, min(score, 5))
+            int_score = int(round(score))
             results.append({
                 "id": doc["id"],
                 "source": doc["source"],
@@ -255,7 +256,8 @@ class NemoCuratorEduClassifier(TransformerClassifier):
         for i_doc, doc in enumerate(doc_batch):
             logit = outputs.logits[i_doc].squeeze(-1).float().cpu().numpy()
             score = float(logit)
-            int_score = int(round(max(0, min(score, 5))))
+            score = max(0, min(score, 5))
+            int_score = int(round(score))
             pred_label = "high_quality" if score >= 2.5 else "low_quality"
             results.append({
                 "id": doc["id"],

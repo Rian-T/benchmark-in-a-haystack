@@ -14,6 +14,12 @@ COLOR_PALETTE = [
     '#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd',
     '#8c564b', '#e377c2', '#7f7f7f', '#bcbd22', '#17becf',
 ]
+BENCHMARK_ORDER = ['gpqa', 'mmlu', 'gsm8k']
+BENCHMARK_COLORS = {
+    'gpqa': '#1f77b4',
+    'mmlu': '#ff7f0e',
+    'gsm8k': '#2ca02c',
+}
 
 def get_available_datasets() -> list[str]:
     """Get list of available datasets from cache subdirectories."""
@@ -79,7 +85,8 @@ def load_data(dataset_name: str = None) -> tuple[pd.DataFrame, pd.DataFrame]:
 def plot_comparison(benchmark_df: pd.DataFrame, 
                    selected_benchmarks: list[str],
                    selected_classifiers: list[str],
-                   metric: str) -> go.Figure:
+                   metric: str,
+                   dataset_name: str = "") -> go.Figure:
     if benchmark_df.empty:
         fig = go.Figure()
         fig.add_annotation(text="No data available", showarrow=False, font=dict(size=16))
@@ -95,7 +102,13 @@ def plot_comparison(benchmark_df: pd.DataFrame,
         else:
             df = df[df['benchmark_type'].isin(selected_benchmarks)]
     if selected_classifiers and "All" not in selected_classifiers:
-        df = df[df['classifier'].isin(selected_classifiers)]
+        if "Gaperon paper" in selected_classifiers:
+            gaperon_classifiers = ['GaperonClassifier', 'FinewebEduClassifier', 'DCLMClassifier', 'TextbookFastTextClassifier']
+            other_classifiers = [c for c in selected_classifiers if c != "Gaperon paper"]
+            combined_classifiers = gaperon_classifiers + other_classifiers
+            df = df[df['classifier'].isin(combined_classifiers)]
+        else:
+            df = df[df['classifier'].isin(selected_classifiers)]
     
     if df.empty:
         fig = go.Figure()
@@ -109,13 +122,33 @@ def plot_comparison(benchmark_df: pd.DataFrame,
         x_label = "Percentile (higher is better)"
         title_text = "Benchmark Sample Percentiles by Classifier"
     
+    subtitle_text = f"Haystack: {dataset_name} (100k documents)" if dataset_name else ""
+    
+    gaperon_order = ['GaperonClassifier', 'FinewebEduClassifier', 'DCLMClassifier', 'TextbookFastTextClassifier']
+    all_classifiers = df['classifier'].unique().tolist()
+    classifier_order = [c for c in gaperon_order if c in all_classifiers]
+    other_clfs = [c for c in all_classifiers if c not in gaperon_order]
+    classifier_order.extend(other_clfs)
+    
+    all_benchmarks = df['benchmark_type'].unique().tolist()
+    benchmark_order = [b for b in BENCHMARK_ORDER if b in all_benchmarks]
+    other_benchmarks = [b for b in all_benchmarks if b not in BENCHMARK_ORDER]
+    benchmark_order.extend(other_benchmarks)
+    
+    color_map = BENCHMARK_COLORS.copy()
+    extra_colors = [c for c in COLOR_PALETTE if c not in BENCHMARK_COLORS.values()]
+    for i, bench in enumerate(other_benchmarks):
+        if bench not in color_map:
+            color_map[bench] = extra_colors[i % len(extra_colors)]
+    
     fig = px.strip(
         df, 
         y='classifier',
         x=metric,
         color='benchmark_type',
         hover_data=['id', 'score', 'rank', 'percentile'],
-        color_discrete_sequence=COLOR_PALETTE,
+        color_discrete_map=color_map,
+        category_orders={'classifier': classifier_order, 'benchmark_type': benchmark_order}
     )
     
     fig.update_traces(
@@ -125,7 +158,7 @@ def plot_comparison(benchmark_df: pd.DataFrame,
     
     fig.update_layout(
         title={
-            'text': title_text,
+            'text': f"{title_text}<br><sub>{subtitle_text}</sub>" if subtitle_text else title_text,
             'font': {'size': 20, 'color': '#2c3e50', 'family': 'Arial, sans-serif'},
             'x': 0.5,
             'xanchor': 'center',
@@ -141,8 +174,8 @@ def plot_comparison(benchmark_df: pd.DataFrame,
             'font': {'size': 15, 'color': '#34495e', 'family': 'Arial, sans-serif'}
         },
         hovermode='closest',
-        width=1400,
         height=750,
+        autosize=True,
         plot_bgcolor='#f8f9fa',
         paper_bgcolor='white',
         font={'family': 'Arial, sans-serif', 'size': 12},
@@ -168,14 +201,15 @@ def plot_comparison(benchmark_df: pd.DataFrame,
         legend=dict(
             title={'text': "Benchmark Type", 'font': {'size': 13, 'color': '#2c3e50'}},
             orientation="v",
-            x=1.01,
+            x=0.99,
             y=1,
             xanchor='left',
             yanchor='top',
             bgcolor='white',
             bordercolor='#bdc3c7',
             borderwidth=1.5,
-            font={'size': 12}
+            font={'size': 12},
+            traceorder='normal'
         ),
         margin=dict(t=80, b=100, l=150, r=150)
     )
@@ -188,6 +222,9 @@ def plot_comparison(benchmark_df: pd.DataFrame,
             line_width=1.2,
             opacity=0.5
         )
+    
+    trace_order = {bench: i for i, bench in enumerate(benchmark_order)}
+    fig.data = sorted(fig.data, key=lambda trace: trace_order.get(trace.name, 999))
     
     if metric == "rank":
         fig.update_xaxes(autorange="reversed")
@@ -326,7 +363,7 @@ def create_app():
                     label="Benchmark Types"
                 )
                 classifier_filter = gr.CheckboxGroup(
-                    choices=["All"] + classifiers,
+                    choices=["All", "Gaperon paper"] + classifiers,
                     value=["All"],
                     label="Classifiers"
                 )
@@ -334,7 +371,7 @@ def create_app():
             
             with gr.Column(scale=3):
                 comparison_plot = gr.Plot(
-                    value=plot_comparison(benchmark_df, ["All"], ["All"], "rank"),
+                    value=plot_comparison(benchmark_df, ["All"], ["All"], "rank", default_dataset),
                     label="Classifier Comparison",
                     show_label=True
                 )
@@ -387,8 +424,8 @@ def create_app():
             
             results = [
                 gr.update(choices=["All", "Gaperon paper"] + bench_types, value=["All"]),
-                gr.update(choices=["All"] + clfs, value=["All"]),
-                plot_comparison(benchmark, ["All"], ["All"], "rank"),
+                gr.update(choices=["All", "Gaperon paper"] + clfs, value=["All"]),
+                plot_comparison(benchmark, ["All"], ["All"], "rank", dataset_name),
                 create_summary_table(benchmark),
                 (combined, benchmark, clfs, bench_types, dataset_name)
             ]
@@ -400,8 +437,40 @@ def create_app():
         
         def update_plot(metric, bench_filter, clf_filter, data_state):
             """Update plot based on filters."""
-            _, benchmark, _, _, _ = data_state
-            return plot_comparison(benchmark, bench_filter, clf_filter, metric)
+            _, benchmark, _, _, dataset_name = data_state
+            return plot_comparison(benchmark, bench_filter, clf_filter, metric, dataset_name)
+        
+        def handle_benchmark_selection(selected):
+            """Handle exclusive selection for All/Gaperon paper in benchmarks."""
+            if not selected:
+                return gr.update(value=["All"])
+            if "All" in selected and len(selected) > 1:
+                if selected[-1] == "All":
+                    return gr.update(value=["All"])
+                else:
+                    return gr.update(value=[s for s in selected if s != "All"])
+            if "Gaperon paper" in selected and len(selected) > 1:
+                if selected[-1] == "Gaperon paper":
+                    return gr.update(value=["Gaperon paper"])
+                else:
+                    return gr.update(value=[s for s in selected if s != "Gaperon paper"])
+            return gr.update(value=selected)
+        
+        def handle_classifier_selection(selected):
+            """Handle exclusive selection for All/Gaperon paper in classifiers."""
+            if not selected:
+                return gr.update(value=["All"])
+            if "All" in selected and len(selected) > 1:
+                if selected[-1] == "All":
+                    return gr.update(value=["All"])
+                else:
+                    return gr.update(value=[s for s in selected if s != "All"])
+            if "Gaperon paper" in selected and len(selected) > 1:
+                if selected[-1] == "Gaperon paper":
+                    return gr.update(value=["Gaperon paper"])
+                else:
+                    return gr.update(value=[s for s in selected if s != "Gaperon paper"])
+            return gr.update(value=selected)
         
         outputs_list = [benchmark_filter, classifier_filter, comparison_plot, summary_table, current_data]
         outputs_list.extend(list(classifier_textboxes.values()))
@@ -419,12 +488,20 @@ def create_app():
         )
         
         benchmark_filter.change(
+            fn=handle_benchmark_selection,
+            inputs=[benchmark_filter],
+            outputs=[benchmark_filter]
+        ).then(
             fn=update_plot,
             inputs=[metric_radio, benchmark_filter, classifier_filter, current_data],
             outputs=[comparison_plot]
         )
         
         classifier_filter.change(
+            fn=handle_classifier_selection,
+            inputs=[classifier_filter],
+            outputs=[classifier_filter]
+        ).then(
             fn=update_plot,
             inputs=[metric_radio, benchmark_filter, classifier_filter, current_data],
             outputs=[comparison_plot]
