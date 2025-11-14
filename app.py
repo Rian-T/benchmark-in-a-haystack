@@ -344,7 +344,7 @@ def create_app():
     benchmark_types = all_datasets_data[default_dataset]['benchmark_types']
     
     with gr.Blocks(theme=gr.themes.Soft(), title="Benchmark in a Haystack") as app:
-        gr.Image("biahs-banner.png", show_label=False, container=False, show_download_button=False, width=600)
+        gr.HTML('<img src="file/biahs-banner.png" style="width: 50%; height: auto;">')
         gr.Markdown("Compare how quality classifiers rank benchmark samples.")
         
         with gr.Row():
