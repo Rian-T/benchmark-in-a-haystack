@@ -28,12 +28,10 @@ def save_top_documents_texts(results: dict, documents: list, dataset_name: str, 
     """
     console.log(f"[bold cyan]Caching top {top_n} document texts per classifier...[/bold cyan]")
     
-    # Create cache directory
     cache_dir = Path("cache") / dataset_name
     cache_dir.mkdir(parents=True, exist_ok=True)
     cache_file = cache_dir / "top_documents_texts.json"
     
-    # Load existing cache if it exists
     existing_cache = {}
     if cache_file.exists():
         try:
@@ -43,27 +41,20 @@ def save_top_documents_texts(results: dict, documents: list, dataset_name: str, 
         except Exception as e:
             console.log(f"[yellow]Could not load existing cache: {e}[/yellow]")
     
-    # Create a mapping from document ID to document text
     doc_id_to_text = {doc['id']: doc['text'] for doc in documents}
-    
-    # Start with existing cache
     top_docs_cache = existing_cache.copy()
     new_texts_added = 0
     
     for clf_name, scores in results.items():
-        # Sort by score descending and take top N
         sorted_scores = sorted(scores, key=lambda x: x['score'], reverse=True)[:top_n]
-        
         console.log(f"[yellow]Processing top {top_n} documents for {clf_name}...[/yellow]")
         
         for score_data in sorted_scores:
             doc_id = score_data['id']
-            # Add text if we have it and it's not already cached
             if doc_id not in top_docs_cache and doc_id in doc_id_to_text:
                 top_docs_cache[doc_id] = doc_id_to_text[doc_id]
                 new_texts_added += 1
     
-    # Save merged cache to JSON file
     with open(cache_file, 'w') as f:
         json.dump(top_docs_cache, f, indent=2)
     
@@ -122,7 +113,6 @@ def download_transformer_model(hub_name, local_dirname, models_dir="models", tru
     if torch_dtype:
         model_kwargs['torch_dtype'] = torch_dtype
     
-    # Download and save the model
     tokenizer = AutoTokenizer.from_pretrained(hub_name)
     model = AutoModelForSequenceClassification.from_pretrained(hub_name, **model_kwargs)
     
@@ -135,12 +125,10 @@ def download_transformer_model(hub_name, local_dirname, models_dir="models", tru
 class DocumentClassifier(ABC):
     
     def __init__(self, config=None):
-        # Extract dataset name from config (e.g., "fineweb" or "fineweb-edu")
-        dataset_name = "fineweb"  # default
+        dataset_name = "fineweb"
         if config and "dataset_name" in config:
             dataset_name = config["dataset_name"]
         
-        # Create dataset-specific cache directory
         cache_dir = Path("cache") / dataset_name
         cache_dir.mkdir(parents=True, exist_ok=True)
         self.cache_file = cache_dir / f"{self.__class__.__name__}.json"
@@ -157,11 +145,7 @@ class DocumentClassifier(ABC):
             json.dump(self._cache, f)
     
     @abstractmethod
-    def _score_single_document(self, document):
-        pass
-    
-    @abstractmethod
-    def _score_documents_impl(self, documents):
+    def _score_documents(self, documents):
         pass
     
     @staticmethod
@@ -221,7 +205,7 @@ class DocumentClassifier(ABC):
         console.log(f"[green]Cache hits: {cache_hits}, Cache misses: {cache_misses}[/green]")
         
         if docs_to_score:
-            new_results = self._score_documents_impl(docs_to_score)
+            new_results = self._score_documents(docs_to_score)
             for doc, result in zip(docs_to_score, new_results):
                 doc_hash = self._get_document_hash(doc)
                 self._cache[doc_hash] = result

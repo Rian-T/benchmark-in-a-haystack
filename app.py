@@ -211,7 +211,7 @@ def plot_comparison(benchmark_df: pd.DataFrame,
             font={'size': 12},
             traceorder='normal'
         ),
-        margin=dict(t=80, b=100, l=150, r=150)
+        margin=dict(t=100, b=100, l=150, r=150)
     )
     
     num_classifiers = len(df['classifier'].unique())

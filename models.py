@@ -47,10 +47,7 @@ class DCLMClassifier(DocumentClassifier):
             )
         return load_fasttext_model(model_path)
 
-    def _score_single_document(self, document):
-        pass
-
-    def _score_documents_impl(self, documents):
+    def _score_documents(self, documents):
         console.log("[bold cyan]Scoring documents with DCLMClassifier...[/bold cyan]")
         return score_documents(documents, self.model)
 
@@ -87,10 +84,7 @@ class TextbookFastTextClassifier(DocumentClassifier):
             )
             return fasttext.load_model(model_path)
 
-    def _score_single_document(self, document):
-        pass
-
-    def _score_documents_impl(self, documents):
+    def _score_documents(self, documents):
         console.log("[bold cyan]Scoring documents with TextbookFastTextClassifier...[/bold cyan]")
         texts = [re.sub(r"\n+", " ", doc["text"]) for doc in tqdm(documents, desc="🔄 Preprocessing text", unit="doc")]
         console.log("[yellow]Running FastText inference (C++ backend, no progress available)...[/yellow]")
@@ -117,7 +111,6 @@ class TransformerClassifier(DocumentClassifier):
         console.log(f"[bold cyan]Initializing {self.__class__.__name__}...[/bold cyan]")
         config = self.get_model_config()
         models_dir = classifier_config.get("models_dir", "models") if classifier_config else "models"
-        # Update model_dir to use models_dir from config
         model_dir = os.path.join(models_dir, os.path.basename(config['model_dir']))
         self.tokenizer, self.model, self.device = self._load_transformer_model(
             model_dir, 
@@ -125,7 +118,6 @@ class TransformerClassifier(DocumentClassifier):
             config.get('trust_remote_code', False),
             config.get('torch_dtype')
         )
-        # Use batch_size from classifier_config if provided, otherwise default to 100
         self.batch_size = classifier_config.get('batch_size', 100) if classifier_config else 100
 
     @classmethod
@@ -151,10 +143,7 @@ class TransformerClassifier(DocumentClassifier):
     def process_outputs(self, outputs, doc_batch):
         pass
 
-    def _score_single_document(self, document):
-        pass
-
-    def _score_documents_impl(self, documents):
+    def _score_documents(self, documents):
         console.log(f"[bold cyan]Scoring documents with {self.__class__.__name__}...[/bold cyan]")
         results = []
         num_batches = (len(documents) + self.batch_size - 1) // self.batch_size
@@ -279,14 +268,12 @@ class FinePDFsClassifierBase(DocumentClassifier):
         console.log(f"[bold cyan]Initializing {self.__class__.__name__}...[/bold cyan]")
         config = self.get_model_config()
         models_dir = classifier_config.get("models_dir", "models") if classifier_config else "models"
-        # Update model_dir to use models_dir from config
         model_dir = os.path.join(models_dir, os.path.basename(config['model_dir']))
         self.tokenizer, self.model, self.device = self._load_transformer_model(
             model_dir, config['hub_name']
         )
         self.CHUNK_SIZE = 2046
         self.MAX_CHARS = 10_000
-        # Use batch_size from classifier_config if provided, otherwise default to 1 (original behavior)
         self.batch_size = classifier_config.get('batch_size', 1) if classifier_config else 1
     
     @classmethod
@@ -330,10 +317,7 @@ class FinePDFsClassifierBase(DocumentClassifier):
             self._trim_to_whitespace(chunks_text[1], True, False)
         ]
     
-    def _score_single_document(self, document):
-        pass
-    
-    def _score_documents_impl(self, documents):
+    def _score_documents(self, documents):
         console.log(f"[bold cyan]Scoring documents with {self.__class__.__name__}...[/bold cyan]")
         results = []
         num_batches = (len(documents) + self.batch_size - 1) // self.batch_size
@@ -341,9 +325,8 @@ class FinePDFsClassifierBase(DocumentClassifier):
         for idx_batch in tqdm(range(0, len(documents), self.batch_size), desc=f"⚡ {self.__class__.__name__}: Inference", total=num_batches, unit="batch"):
             doc_batch = documents[idx_batch:idx_batch + self.batch_size]
             
-            # Collect all chunks from all documents in the batch
             all_chunks = []
-            doc_chunk_mapping = []  # Track which chunks belong to which document
+            doc_chunk_mapping = []
             
             for doc_idx, doc in enumerate(doc_batch):
                 chunks = self._create_text_chunks(doc["text"])
@@ -351,20 +334,17 @@ class FinePDFsClassifierBase(DocumentClassifier):
                 all_chunks.extend(chunks)
                 doc_chunk_mapping.append((doc_idx, chunk_start_idx, len(all_chunks)))
             
-            # Process all chunks in one batch
             if all_chunks:
                 inputs = self.tokenizer(all_chunks, return_tensors="pt", padding="longest", truncation=True).to(self.device)
                 with torch.no_grad():
                     outputs = self.model(**inputs)
                 all_scores = outputs.logits.squeeze(-1).float().detach().cpu().numpy()
                 
-                # If only one chunk, ensure it's an array
                 if len(all_chunks) == 1:
                     all_scores = [all_scores.item()]
                 else:
                     all_scores = all_scores.tolist()
             
-            # Map scores back to documents and take max per document
             for doc_idx, chunk_start, chunk_end in doc_chunk_mapping:
                 doc = doc_batch[doc_idx]
                 doc_scores = all_scores[chunk_start:chunk_end]
