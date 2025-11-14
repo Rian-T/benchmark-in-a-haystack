@@ -1,0 +1,69 @@
+# Haystack Experiment Configuration
+
+experiment:
+  seed: 42
+  inject_inside: false  # true = inject benchmarks into docs, false = separate docs
+
+output:
+  base_dir: "results"  # base output directory
+
+models:
+  offline_dir: "models"  # directory for downloaded models
+
+dataset:
+  num_docs: 100000
+  fineweb_path: "HuggingFaceFW/fineweb-2"  # Options: "HuggingFaceFW/fineweb", "HuggingFaceFW/fineweb-edu", or "HuggingFaceFW/fineweb-2"
+  subset: "fra_Latn"  # For fineweb/fineweb-edu: "sample-10BT". For fineweb-2: language codes like "eng_Latn", "fra_Latn", "deu_Latn", etc.
+  prefilter_hq: false
+  min_hq_score: 0.7
+
+benchmarks:
+  mmlu:
+    count: 3
+    subjects:
+      - anatomy
+      - computer_security
+      - high_school_geography
+      - moral_scenarios
+      - college_physics
+  gsm8k:
+    count: 10
+  gpqa:
+    count: 10
+  arc_challenge:
+    count: 10
+  arc_easy:
+    count: 10
+  hellaswag:
+    count: 10
+  piqa:
+    count: 10
+  truthfulqa:
+    count: 10
+
+classifiers:
+  - name: DCLMClassifier
+    enabled: true
+  # - name: TextbookFastTextClassifier
+  #   enabled: true
+  - name: FinewebEduClassifier
+    enabled: true
+    batch_size: 32
+  - name: GaperonClassifier
+    enabled: true
+    batch_size: 32
+  # - name: FinePDFsEduClassifier
+  #   enabled: true
+  #   batch_size: 32
+  # - name: FinePDFsEduClassifierV2
+  #   enabled: true
+  #   batch_size: 32
+  # - name: FinePDFsDCLMClassifier
+  #   enabled: true
+  #   batch_size: 32
+  - name: NemoCuratorEduClassifier
+    enabled: true
+    batch_size: 32
+  - name: EuroFilterClassifier
+    enabled: true
+    batch_size: 32

@@ -154,7 +154,9 @@ cython_debug/
 .DS_Store
 
 # Existing project-specific ignores
-fastText
-models/*
-old
-results/*
+fastText/
+models/
+old/
+results/
+cache/**/*.json
+.gradio/
