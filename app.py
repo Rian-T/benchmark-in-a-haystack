@@ -8,6 +8,7 @@ from pathlib import Path
 import json
 import warnings
 warnings.filterwarnings('ignore')
+from models import DCLMClassifier
 
 CACHE_BASE_DIR = Path("cache")
 COLOR_PALETTE = [
@@ -19,6 +20,7 @@ BENCHMARK_COLORS = {
     'gpqa': '#1f77b4',
     'mmlu': '#ff7f0e',
     'gsm8k': '#2ca02c',
+    'inference': '#e74c3c',
 }
 
 def get_available_datasets() -> list[str]:
@@ -141,8 +143,16 @@ def plot_comparison(benchmark_df: pd.DataFrame,
         if bench not in color_map:
             color_map[bench] = extra_colors[i % len(extra_colors)]
     
+    has_inference = 'inference' in df['benchmark_type'].values
+    if has_inference:
+        df_regular = df[df['benchmark_type'] != 'inference'].copy()
+        df_inference = df[df['benchmark_type'] == 'inference'].copy()
+    else:
+        df_regular = df.copy()
+        df_inference = pd.DataFrame()
+    
     fig = px.strip(
-        df, 
+        df_regular, 
         y='classifier',
         x=metric,
         color='benchmark_type',
@@ -156,14 +166,37 @@ def plot_comparison(benchmark_df: pd.DataFrame,
         jitter=0.3
     )
     
+    if has_inference and not df_inference.empty:
+        for _, row in df_inference.iterrows():
+            fig.add_trace(go.Box(
+                x=[row[metric]],
+                y=[row['classifier']],
+                name='user text',
+                marker=dict(
+                    color='#e74c3c',
+                    size=13,
+                    symbol='star',
+                    line=dict(color='black', width=1.5)
+                ),
+                boxpoints='all',
+                jitter=0,
+                pointpos=0,
+                fillcolor='rgba(0,0,0,0)',
+                line=dict(color='rgba(0,0,0,0)'),
+                showlegend=True,
+                hovertemplate=f'user text<br>Classifier: {row["classifier"]}<br>Score: {row["score"]:.6f}<br>Rank: {row["rank"]:.0f}<br>Percentile: {row["percentile"]:.1f}<extra></extra>'
+            ))
+    
+    
     fig.update_layout(
         title={
-            'text': f"{title_text}<br><sub>{subtitle_text}</sub>" if subtitle_text else title_text,
+            'text': f"{title_text}<br><span style='font-size:14px'>{subtitle_text}</span>" if subtitle_text else title_text,
             'font': {'size': 20, 'color': '#2c3e50', 'family': 'Arial, sans-serif'},
             'x': 0.5,
             'xanchor': 'center',
-            'y': 0.98,
-            'yanchor': 'top'
+            'y': 0.95,
+            'yanchor': 'top',
+            'pad': {'b': 10}
         },
         yaxis_title={
             'text': "Classifier",
@@ -211,7 +244,7 @@ def plot_comparison(benchmark_df: pd.DataFrame,
             font={'size': 12},
             traceorder='normal'
         ),
-        margin=dict(t=100, b=100, l=150, r=150)
+        margin=dict(t=110, b=100, l=150, r=150)
     )
     
     num_classifiers = len(df['classifier'].unique())
@@ -296,9 +329,57 @@ def get_top_documents_per_classifier(combined_df: pd.DataFrame, dataset_name: st
     
     return result
 
+def perform_inference(text_input, benchmark_df, metric, bench_filter, clf_filter, dataset_name, dclm_model):
+    """Perform real-time inference on user text with DCLM FastText classifier."""
+    if not text_input or not text_input.strip():
+        return plot_comparison(benchmark_df, bench_filter, clf_filter, metric, dataset_name)
+    
+    doc = {
+        "id": "inference-result",
+        "text": text_input.strip(),
+        "source": "user-input",
+        "contains_benchmark": False,
+        "benchmark_type": "inference",
+        "benchmark_index": None
+    }
+    
+    dclm_results = dclm_model._score_documents([doc])
+    
+    inference_rows = []
+    result = dclm_results[0]
+    inference_rows.append({
+        'doc_hash': 'inference',
+        'classifier': 'DCLMClassifier',
+        'id': result['id'],
+        'source': result['source'],
+        'contains_benchmark': result['contains_benchmark'],
+        'benchmark_type': result['benchmark_type'],
+        'benchmark_index': result['benchmark_index'],
+        'score': result['score'],
+        'rank': 1,
+        'percentile': 100
+    })
+    
+    inference_df = pd.DataFrame(inference_rows)
+    combined_df = pd.concat([benchmark_df, inference_df], ignore_index=True)
+    combined_df['rank'] = combined_df.groupby('classifier')['score'].rank(ascending=False, method='min')
+    combined_df['percentile'] = combined_df.groupby('classifier')['rank'].transform(
+        lambda x: (x.max() - x + 1) / x.max() * 100
+    )
+    
+    return plot_comparison(combined_df, bench_filter, clf_filter, metric, dataset_name)
+
 def create_app():
     print("Loading available datasets...")
     available_datasets = get_available_datasets()
+    
+    print("Initializing inference model (DCLM)...")
+    try:
+        dclm_classifier = DCLMClassifier()
+        print("✓ Inference model loaded successfully\n")
+    except Exception as e:
+        print(f"⚠️  Error loading inference model: {e}")
+        dclm_classifier = None
     
     if not available_datasets:
         print(f"⚠️  No datasets found in {CACHE_BASE_DIR.absolute()}")
@@ -375,6 +456,16 @@ def create_app():
                     label="Classifier Comparison",
                     show_label=True
                 )
+        
+        gr.Markdown("### Real-Time Inference")
+        gr.Markdown("Enter text below to see how DCLMClassifier scores it in real-time (CPU inference).")
+        inference_input = gr.Textbox(
+            label="Input Text",
+            placeholder="Type or paste text here for real-time inference...",
+            lines=10,
+            max_lines=20,
+            interactive=True
+        )
         
         gr.Markdown("### Summary Statistics")
         summary_table = gr.Dataframe(
@@ -512,6 +603,17 @@ def create_app():
             inputs=[metric_radio, benchmark_filter, classifier_filter, current_data],
             outputs=[comparison_plot]
         )
+        
+        if dclm_classifier:
+            def inference_wrapper(text, data_state, metric, bench_filter, clf_filter):
+                _, benchmark, _, _, dataset_name = data_state
+                return perform_inference(text, benchmark, metric, bench_filter, clf_filter, dataset_name, dclm_classifier)
+            
+            inference_input.change(
+                fn=inference_wrapper,
+                inputs=[inference_input, current_data, metric_radio, benchmark_filter, classifier_filter],
+                outputs=[comparison_plot]
+            )
     
     return app
 
