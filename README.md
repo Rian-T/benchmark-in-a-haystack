@@ -2,7 +2,13 @@
   <img src="biahs-banner.png" alt="Benchmark in a Haystack Banner">
 </div>
 
-Evaluate how quality filters rank benchmark samples. Insert benchmark items (MMLU, GSM8K, GPQA, ARC, HellaSwag, PIQA, TruthfulQA) into a corpus and measure their ranking by different quality classifiers.
+Quality filters decide what enters a pretraining corpus. If they rank benchmark
+questions above ordinary web text, then the curation pipeline is itself a
+contamination channel.
+
+Insert benchmark items (MMLU, GSM8K, GPQA, ARC, HellaSwag, PIQA, TruthfulQA)
+into a FineWeb corpus, score every document with six quality classifiers, and
+read where the benchmark items land in the ranking.
 
 ## Installation
 
